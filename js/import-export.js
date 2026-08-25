@@ -2,6 +2,39 @@
  * Excel/JSON 导入导出、模板下载、XLSX 库加载、状态映射
  * 从 script.js 拆分而来 - 请勿手动修改行号映射
  */
+
+/**
+ * 导入事务包装：回调抛出任何异常 → 自动回滚 data/ 到快照状态并重新抛出；
+ * 正常完成 → 提交并清理快照。本地 file:// 模式下 server 不可用时自动跳过快照。
+ */
+async function withImportSnapshot(transactionName, fn) {
+    const snapRes = await storageManager.createImportSnapshot();
+    const snapshotId = (snapRes && snapRes.snapshotId) || '';
+    if (snapshotId) {
+        Logger.info('Import', `${transactionName} 创建快照: ${snapshotId}`);
+    }
+    try {
+        await fn();
+        if (snapshotId) await storageManager.commitImportSnapshot(snapshotId);
+    } catch (err) {
+        if (snapshotId) {
+            try {
+                const r = await storageManager.rollbackImportSnapshot(snapshotId);
+                if (r && r.ok) {
+                    // 回滚完成后，内存也需要回到导入前：强制刷新内存资产数据
+                    if (typeof refreshAssetsFromStorage === 'function') {
+                        try { await refreshAssetsFromStorage(); } catch (_) {}
+                    }
+                    Logger.warn('Import', `${transactionName} 失败，已回滚到快照`);
+                }
+            } catch (rbErr) {
+                Logger.error('Import', `${transactionName} 回滚失败: ` + rbErr.message);
+            }
+        }
+        throw err;
+    }
+}
+
 function handleExcelImport(e) {
     Logger.info('Import', 'Excel 导入触发');
     if (!checkXlsxLibrary()) {
@@ -14,33 +47,38 @@ function handleExcelImport(e) {
         document.getElementById('import-json').click();
         return;
     }
-    
+
     const file = e.target.files[0];
     if (!file) return;
-    
+
     // 只接受Excel文件
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
         showNotification('请导入Excel格式的文件', 'warning');
         hideLoadingIndicator();
         return;
     }
-    
+
     // 显示加载指示器
     showLoadingIndicator();
-    
+
     const reader = new FileReader();
-    reader.onload = function(event) {
-        try {
+    reader.onerror = function() {
+        console.error('读取Excel文件失败');
+        showNotification('读取Excel文件失败，请重试', 'error');
+        hideLoadingIndicator();
+    };
+    reader.onload = async function(event) {
+        await withImportSnapshot('Excel导入', async () => {
             const data = new Uint8Array(event.target.result);
             const workbook = XLSX.read(data, { type: 'array' });
-            
+
             // 获取第一个工作表
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
-            
+
             // 转换为JSON
             const importedData = XLSX.utils.sheet_to_json(worksheet);
-            
+
             // 验证导入的数据格式
             if (!Array.isArray(importedData) || importedData.length === 0) {
                 throw new Error('导入的Excel文件中没有有效数据');
@@ -48,14 +86,36 @@ function handleExcelImport(e) {
             
             // 映射Excel列到系统字段
             const mappedData = importedData.map((item, index) => {
+                // 购入日期解析：兼容 Excel 序列号日期 / ISO 字符串 / 中文斜杠格式
+                let purchaseDate = '';
+                const rawDate = item['购入日期'];
+                if (rawDate !== undefined && rawDate !== null && rawDate !== '') {
+                    // Excel 序列号（1900 日期系统）
+                    if (typeof rawDate === 'number') {
+                        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+                        const utcDays = Math.floor(rawDate - 1); // 修正 Excel 闰年 Bug
+                        const targetDate = new Date(excelEpoch.getTime() + utcDays * 86400000);
+                        purchaseDate = targetDate.toISOString().split('T')[0];
+                    } else {
+                        const parsed = new Date(String(rawDate).replace(/\//g, '-'));
+                        if (!isNaN(parsed.getTime())) {
+                            purchaseDate = parsed.toISOString().split('T')[0];
+                        }
+                    }
+                }
+
+                // 状态映射：未知状态或空时默认闲置，避免验证失败
+                const mappedStatus = mapStatus(item['状态']);
+                const status = mappedStatus || 'idle';
+
                 return {
-                    id: item['资产编号'] || `AUTO-${Date.now()}-${index}`,
+                    id: (item['资产编号'] && String(item['资产编号']).trim()) ? String(item['资产编号']).trim() : `AUTO-${Date.now()}-${index}`,
                     owner: item['主体'] || '',
                     type: item['设备类型'] || '',
                     brandModel: item['品牌型号'] || '',
                     configuration: item['配置信息'] || '',
-                    purchaseDate: item['购入日期'] ? new Date(item['购入日期']).toISOString().split('T')[0] : '',
-                    status: mapStatus(item['状态']),
+                    purchaseDate,
+                    status,
                     user: item['使用人'] || '',
                     department: item['部门'] || '',
                     location: item['位置'] || '',
@@ -72,16 +132,28 @@ function handleExcelImport(e) {
                 };
             });
             
-            // 验证数据结构
+            // 验证数据结构：只校验模板中标注的必填字段
+            const REQUIRED_FIELDS = ['owner', 'type', 'brandModel', 'purchaseDate', 'status', 'department'];
+            const REQUIRED_LABELS = {
+                owner: '主体', type: '设备类型', brandModel: '品牌型号',
+                purchaseDate: '购入日期', status: '状态', department: '部门'
+            };
             const validationErrors = [];
             mappedData.forEach((item, index) => {
-                if (!item.id || !item.owner || !item.type || !item.brandModel || !item.purchaseDate || !item.status || !item.department) {
-                    validationErrors.push(`第${index+1}条数据缺少必要字段`);
+                const missing = REQUIRED_FIELDS.filter(f => !item[f] || String(item[f]).trim() === '');
+                if (missing.length > 0) {
+                    validationErrors.push(`第${index+1}条数据缺少必要字段: ${missing.map(m => REQUIRED_LABELS[m]).join('、')}`);
                 }
-                
-                // 验证日期格式
+                // 验证日期格式（purchaseDate 已非空才检查）
                 if (item.purchaseDate && isNaN(new Date(item.purchaseDate).getTime())) {
-                    validationErrors.push(`第${index+1}条数据的购入日期格式不正确`);
+                    validationErrors.push(`第${index+1}条数据的购入日期格式不正确（请使用 YYYY-MM-DD 或标准日期格式）`);
+                }
+                // 数量/价值合理性检查
+                if (item.quantity <= 0 || isNaN(item.quantity)) {
+                    validationErrors.push(`第${index+1}条数据的数量必须是大于0的整数`);
+                }
+                if (item.value < 0 || isNaN(item.value)) {
+                    validationErrors.push(`第${index+1}条数据的价值不能为负数`);
                 }
             });
             
@@ -91,10 +163,6 @@ function handleExcelImport(e) {
             
             // 分批导入（大数据优化）
             const BATCH_SIZE = 100; // 每批处理100条数据
-            let currentIndex = 0;
-            let addedCount = 0;
-            let updatedCount = 0;
-            
             // 创建一个临时的DOM元素显示进度
             let progressElement = document.createElement('div');
             progressElement.className = 'loading-indicator progress';
@@ -106,58 +174,57 @@ function handleExcelImport(e) {
                 <div class="progress-percentage">0%</div>
             `;
             document.body.appendChild(progressElement);
-            
-            function processBatch() {
-                const batch = mappedData.slice(currentIndex, currentIndex + BATCH_SIZE);
-                if (batch.length === 0) {
-                    // 导入完成
-                    document.body.removeChild(progressElement);
-                    
-                    // 更新UI
-                    updateStatistics();
-                    renderRecentAssets();
-                    renderDamagedAssets();
-                    renderAllAssets();
-                    
-                    // 保存到本地存储
-                    saveToLocalStorage();
 
-                    showNotification(`成功导入 ${addedCount} 条新资产，更新 ${updatedCount} 条现有资产`, 'success', 4000);
-                    hideLoadingIndicator();
-                    return;
-                }
-                
-                // 处理当前批次
-                batch.forEach(newAsset => {
-                    const existingIndex = assetsData.findIndex(a => a.id === newAsset.id);
-                    if (existingIndex === -1) {
-                        // 添加新资产
-                        assetsData.push(newAsset);
-                        addedCount++;
-                    } else {
-                        // 更新现有资产
-                        assetsData[existingIndex] = newAsset;
-                        updatedCount++;
+            // 将 RAF 分批导入包装成 Promise，让快照事务能等待完成 / 失败回滚
+            await new Promise((resolve, reject) => {
+                let currentIndex = 0;
+                let addedCount = 0;
+                let updatedCount = 0;
+
+                function processBatch() {
+                    try {
+                        const batch = mappedData.slice(currentIndex, currentIndex + BATCH_SIZE);
+                        if (batch.length === 0) {
+                            document.body.removeChild(progressElement);
+
+                            updateStatistics();
+                            renderRecentAssets();
+                            renderDamagedAssets();
+                            renderAllAssets();
+
+                            saveToLocalStorage();
+
+                            showNotification(`成功导入 ${addedCount} 条新资产，更新 ${updatedCount} 条现有资产`, 'success', 4000);
+                            hideLoadingIndicator();
+                            resolve();
+                            return;
+                        }
+
+                        batch.forEach(newAsset => {
+                            const existingIndex = assetsData.findIndex(a => a.id === newAsset.id);
+                            if (existingIndex === -1) {
+                                assetsData.push(newAsset);
+                                addedCount++;
+                            } else {
+                                assetsData[existingIndex] = newAsset;
+                                updatedCount++;
+                            }
+                        });
+
+                        currentIndex += BATCH_SIZE;
+                        const progress = Math.min(100, Math.floor((currentIndex / mappedData.length) * 100));
+                        progressElement.querySelector('.progress-fill').style.width = `${progress}%`;
+                        progressElement.querySelector('.progress-percentage').textContent = `${progress}%`;
+
+                        requestAnimationFrame(processBatch);
+                    } catch (err) {
+                        reject(err);
                     }
-                });
-                
-                // 更新进度
-                currentIndex += BATCH_SIZE;
-                const progress = Math.min(100, Math.floor((currentIndex / mappedData.length) * 100));
-                progressElement.querySelector('.progress-fill').style.width = `${progress}%`;
-                progressElement.querySelector('.progress-percentage').textContent = `${progress}%`;
-                
-                // 使用requestAnimationFrame避免UI阻塞
-                requestAnimationFrame(processBatch);
-            }
-            
-            // 开始分批处理
-            processBatch();
-        } catch (error) {
-            showNotification(`导入失败: ${error.message}`, 'error', 4000);
-            console.error('导入错误:', error);
-            hideLoadingIndicator();
-        }
+                }
+
+                processBatch();
+            });
+        });
     };
 
     reader.readAsArrayBuffer(file);
@@ -169,11 +236,13 @@ function handleExcelImport(e) {
 // 处理JSON导入
 function handleJsonImport(e) {
     Logger.info('Import', 'JSON 导入触发');
+    const file = e.target.files[0];
     if (!file) return;
     
     // 只接受JSON文件
     if (!file.name.endsWith('.json')) {
         showNotification('请导入JSON格式的文件', 'warning');
+        hideLoadingIndicator();
         return;
     }
     
@@ -181,30 +250,72 @@ function handleJsonImport(e) {
     showLoadingIndicator();
     
     const reader = new FileReader();
-    reader.onload = function(event) {
-        try {
-            const importedData = JSON.parse(event.target.result);
+    reader.onerror = function() {
+        console.error('读取JSON文件失败');
+        showNotification('读取JSON文件失败，请重试', 'error');
+        hideLoadingIndicator();
+    };
+    reader.onload = async function(event) {
+        await withImportSnapshot('JSON导入', async () => {
+            const rawImport = JSON.parse(event.target.result);
             let assetsToImport = [];
             let importSourceInfo = '';
-            
+
+            // 兼容「备份数据」按钮导出的格式（version + assetsData + userState）
+            const isBackupFormat = !!(rawImport && rawImport.version && rawImport.assetsData && rawImport.userState);
+            // 兼容「导出JSON」按钮导出的格式（version + assetsData + exportTime）
+            const isJsonExportFormat = !!(rawImport && rawImport.version && rawImport.assetsData && !rawImport.userState && (rawImport.exportType === 'json' || rawImport.exportTime));
+
+            let importedData = rawImport;
+            if (isBackupFormat) {
+                importedData = {
+                    version: rawImport.version,
+                    exportTime: rawImport.timestamp || new Date().toISOString(),
+                    assetsData: rawImport.assetsData,
+                    _backupFormat: true
+                };
+            }
+
             // 检查是否为新版本导出格式
-            if (importedData.version && importedData.assetsData) {
-                // 版本兼容性检查
-                if (storageManager.checkVersionCompatibility(importedData.version)) {
-                    // 记录导入源信息
-                    importSourceInfo = `(版本: ${importedData.version}, 导出时间: ${new Date(importedData.exportTime).toLocaleString()})`;
-                    
+            if (importedData && importedData.version && importedData.assetsData) {
+                // 版本兼容性检查（容错：缺失方法时按兼容处理）
+                const versionOk = (typeof storageManager.checkVersionCompatibility === 'function')
+                    ? storageManager.checkVersionCompatibility(importedData.version)
+                    : true;
+
+                if (versionOk) {
+                    const exportedAt = importedData.exportTime || importedData.timestamp || '';
+                    const timeStr = exportedAt ? new Date(exportedAt).toLocaleString() : '未知';
+                    importSourceInfo = `${importedData._backupFormat ? '(备份数据格式' : '(版本: '}${importedData.version}${importedData._backupFormat ? ')' : `, 导出时间: ${timeStr})`}`;
+                    if (!importedData._backupFormat && exportedAt) {
+                        importSourceInfo = `(版本: ${importedData.version}, 导出时间: ${timeStr})`;
+                    }
+
+                    let rawAssets = importedData.assetsData;
+
+                    // 压缩数据可能是非数组字符串或压缩对象，先尝试解压缩
+                    let decompressed = rawAssets;
                     try {
-                        // 尝试解压缩数据
-                        const decompressedData = storageManager.decompressData(importedData.assetsData);
-                        assetsToImport = decompressedData;
+                        if (typeof storageManager.decompressData === 'function') {
+                            decompressed = storageManager.decompressData(rawAssets);
+                        }
                     } catch (compressionError) {
                         console.warn('解压缩失败，尝试直接使用原始数据:', compressionError);
-                        // 如果解压缩失败，尝试直接使用原始资产数据
-                        assetsToImport = importedData.assetsData;
+                        decompressed = rawAssets;
                     }
+
+                    // 如果 assetsData 仍是字符串（双重序列化），再 parse 一次
+                    if (typeof decompressed === 'string') {
+                        try { decompressed = JSON.parse(decompressed); } catch (_) { /* keep as-is */ }
+                    }
+
+                    if (!Array.isArray(decompressed)) {
+                        throw new Error('导入文件中的资产数据不是有效的资产列表（缺少 assetsData 数组）');
+                    }
+                    assetsToImport = decompressed;
                 } else {
-                    throw new Error(`导入的文件版本(${importedData.version})与当前系统版本(${storageManager.dataVersion})不兼容`);
+                    const currentVer = (storageManager && storageManager.dataVersion) || '未知';
+                    throw new Error(`导入的文件版本(${importedData.version})与当前系统版本(${currentVer})不兼容`);
                 }
             } else if (Array.isArray(importedData)) {
                 // 旧版本格式（直接是资产数组）
@@ -213,11 +324,36 @@ function handleJsonImport(e) {
             } else {
                 throw new Error('导入的数据格式不正确，不是有效的资产数据');
             }
-            
-            // 验证数据结构
+
+            // 为每条导入数据补齐默认字段，避免校验失败
+            assetsToImport = assetsToImport.map((item, idx) => Object.assign({
+                id: '',
+                owner: '',
+                type: '',
+                brandModel: '',
+                purchaseDate: '',
+                status: '',
+                department: '',
+                quantity: 1,
+                value: 0,
+                unit: '台',
+                maintenanceRecords: [],
+                attachments: []
+            }, item || {}));
+
+            // 验证数据结构（模板中标注的必填字段）
+            const REQUIRED_LABELS = { owner: '主体', type: '设备类型', brandModel: '品牌型号', purchaseDate: '购入日期', status: '状态', department: '部门' };
+            const REQUIRED_FIELDS = Object.keys(REQUIRED_LABELS);
             assetsToImport.forEach((item, index) => {
-                if (!item.id || !item.owner || !item.type || !item.brandModel || !item.purchaseDate || !item.status || !item.department) {
-                    throw new Error(`第${index+1}条数据缺少必要字段`);
+                const missing = REQUIRED_FIELDS.filter(f => !item[f] || String(item[f]).trim() === '');
+                if (missing.length > 0) {
+                    throw new Error(`第${index + 1}条数据缺少必要字段: ${missing.map(m => REQUIRED_LABELS[m]).join('、')}`);
+                }
+                if (item.purchaseDate && isNaN(new Date(item.purchaseDate).getTime())) {
+                    throw new Error(`第${index + 1}条数据的购入日期格式不正确`);
+                }
+                if (item.quantity <= 0 || isNaN(Number(item.quantity))) {
+                    throw new Error(`第${index + 1}条数据的数量必须为正整数`);
                 }
             });
             
@@ -226,6 +362,10 @@ function handleJsonImport(e) {
             let updatedCount = 0;
             
             assetsToImport.forEach(newAsset => {
+                // 导入时若 id 为空自动生成
+                if (!newAsset.id || String(newAsset.id).trim() === '') {
+                    newAsset.id = `AUTO-${Date.now()}-${addedCount}-${updatedCount}`;
+                }
                 const existingIndex = assetsData.findIndex(a => a.id === newAsset.id);
                 if (existingIndex === -1) {
                     // 添加新资产
@@ -243,19 +383,13 @@ function handleJsonImport(e) {
             renderRecentAssets();
             renderDamagedAssets();
             renderAllAssets();
-            
+
             // 保存到本地存储
             saveToLocalStorage();
-            
+
             // 记录导入操作
             showNotification(`成功导入 ${addedCount} 条新资产，更新 ${updatedCount} 条现有资产\n${importSourceInfo}`, 'success', 5000);
-        } catch (error) {
-            showNotification(`导入失败: ${error.message}`, 'error', 4000);
-            console.error('导入错误:', error);
-        } finally {
-            // 隐藏加载指示器
-            hideLoadingIndicator();
-        }
+        });
     };
     
     reader.readAsText(file);

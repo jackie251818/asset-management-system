@@ -66,8 +66,8 @@
 }
 
 body {
-    background-color: #f5f7fa;
-    color: #333;
+    background-color: var(--bg-body, #f5f7fa);
+    color: var(--text-color, #333);
     font-size: 14px;
     line-height: 1.5;
 }
@@ -89,10 +89,12 @@ button {
 
 input, select, textarea {
     outline: none;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid var(--border-input, #ddd);
+    border-radius: var(--border-radius, 4px);
     padding: 8px 12px;
     font-size: 14px;
+    background-color: var(--bg-surface, #fff);
+    color: var(--text-color, #333);
 }
 
 input:focus, select:focus, textarea:focus {
@@ -102,30 +104,60 @@ input:focus, select:focus, textarea:focus {
 
 /* ================================== 全局样式变量 ================================== */
 :root {
-    --primary-color: #3081eb; /* 主色：蓝色 */
-    --primary-hover: #256bdb; /* 主色悬停 */
+    /* 品牌色：与旧变量别名兼容，避免散落的 var(--brand, ...) / var(--primary-dark) 失效 */
+    --brand: #3081eb;
+    --brand-hover: #256bdb;
+    --brand-light: #cfe3ff;
+    --brand-dark: #1f5bb8;
+    --primary-color: var(--brand); /* 主色：蓝色（别名兼容） */
+    --primary-hover: var(--brand-hover); /* 主色悬停（别名兼容） */
+    --primary-dark: var(--brand-dark);
+
+    /* 语义色 */
     --success-color: #52c41a; /* 成功色：绿色 */
     --success-hover: #73d13d; /* 成功色悬停 */
     --warning-color: #faad14; /* 警告色：黄色 */
     --warning-hover: #ffc53d; /* 警告色悬停 */
     --danger-color: #ff4d4f;  /* 危险色：红色 */
     --danger-hover: #ff7875;  /* 危险色悬停 */
-    --gray-light: #f5f7fa;    /* 浅灰：背景色 */
-    --gray: #ddd;             /* 中灰：边框、分割线 */
-    --gray-dark: #86909c;     /* 深灰：辅助文字 */
-    --text-color: #333;       /* 主文本色 */
-    --text-secondary: #666;   /* 次要文本色 */
-    --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); /* 卡片阴影 */
-    --card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.12); /* 卡片悬浮阴影 */
+    --info-bg: #f5faff;
+    --info-fg: #2b4a7a;
+    --info-fg-muted: #5376a8;
+    --info-fg-soft: #6b86af;
+
+    /* 灰阶与背景 */
+    --bg-body: #f5f7fa;
+    --bg-surface: #ffffff;
+    --bg-soft: #f5f7fa;
+    --bg-tag: #e6f1ff;
+    --gray-light: #f5f7fa;    /* 浅灰：背景色（别名兼容） */
+    --gray: #ddd;             /* 中灰：边框、分割线（别名兼容） */
+    --gray-border: #e2e8f0;
+    --gray-border-soft: #e0e0e0;
+    --gray-dark: #86909c;     /* 深灰：辅助文字（别名兼容） */
+    --text-color: #333;       /* 主文本色（别名兼容） */
+    --text-secondary: #666;   /* 次要文本色（别名兼容） */
+
+    /* 间距 */
     --spacing-xs: 4px;
     --spacing-sm: 8px;
     --spacing-md: 12px;
     --spacing-lg: 16px;
     --spacing-xl: 20px;
     --spacing-xxl: 24px;
+
+    /* 圆角 & 阴影 & 过渡 */
     --border-radius: 4px;
+    --radius-md: 6px;
     --border-radius-lg: 8px;
+    --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); /* 卡片阴影 */
+    --card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.12); /* 卡片悬浮阴影 */
     --transition-base: all 0.3s ease;
+
+    /* 边框（统一色） */
+    --border: #ddd;
+    --border-input: #ddd;
+    --border-card: #e2e8f0;
 }
 
 /* 加载指示器 */
@@ -474,7 +506,7 @@ input:focus, select:focus, textarea:focus {
 
 /* 卡片组件 */
 .card {
-    background-color: #fff;
+    background-color: var(--bg-surface, #fff);
     border-radius: var(--border-radius-lg);
     box-shadow: var(--card-shadow);
     padding: var(--spacing-xl);
@@ -732,8 +764,8 @@ table tbody tr:last-child td {
     justify-content: center;
     cursor: pointer;
     transition: var(--transition-base);
-    border: 1px solid #e2e8f0;
-    background: white;
+    border: 1px solid var(--border-card, #e2e8f0);
+    background: var(--bg-surface, white);
     font-size: 14px;
     font-weight: 500;
 }

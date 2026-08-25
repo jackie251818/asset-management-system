@@ -1245,6 +1245,26 @@
                     
                     <div style="padding: 10px 0;">
                         <p style="margin-bottom: 15px;">管理系统中的数据，包括导入、导出、备份和恢复操作。</p>
+
+                        <!-- 数据目录提示卡 -->
+                        <div id="data-dir-panel" style="margin: 0 0 18px; padding: 12px 16px; background: var(--info-bg, #f5faff); border: 1px solid var(--brand-light, #cfe3ff); border-radius: var(--radius-md, 6px); font-size: 13px; color: var(--info-fg, #2b4a7a);">
+                            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                                <div>
+                                    <strong>📁 数据保存位置：</strong>
+                                    <code id="data-dir-path" style="background: var(--bg-tag, #e6f1ff); padding: 2px 6px; border-radius: 4px; word-break: break-all;">正在获取…</code>
+                                    <div id="data-dir-hint" style="margin-top: 6px; color: var(--info-fg-muted, #5376a8);"></div>
+                                    <div style="margin-top: 8px; font-size: 12px; color: var(--info-fg-soft, #6b86af);">
+                                        <span>版本：</span><code id="app-version" style="background: var(--bg-tag, #e6f1ff); padding: 2px 6px; border-radius: 4px;">—</code>
+                                        <span style="margin-left: 12px;">构建时间：</span><code id="app-build-time" style="background: var(--bg-tag, #e6f1ff); padding: 2px 6px; border-radius: 4px;">—</code>
+                                        <span id="app-build-channel" style="margin-left: 12px;"></span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="open-data-dir" style="margin-right: 8px;"><i class="fas fa-folder-open"></i> 打开目录</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="copy-data-dir"><i class="fas fa-copy"></i> 复制路径</button>
+                                </div>
+                            </div>
+                        </div>
                         
                         <div class="data-management">
                             <button class="btn btn-primary" id="import-excel">

@@ -7,9 +7,13 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win portable",
-    "build:nsis": "electron-builder --win nsis",
-    "pack": "electron-builder --win portable --dir"
+    "build": "node scripts/build-portable.js",
+    "build:portable": "node scripts/build-portable.js --portable",
+    "build:nsis": "node scripts/build-portable.js --nsis",
+    "build:dir": "node scripts/build-portable.js --dir",
+    "pack": "electron-builder --win portable --dir",
+    "test": "node tests/smoke.test.js",
+    "smoke": "node tests/smoke.test.js"
   },
   "devDependencies": {
     "electron": "^30.0.0",
@@ -29,12 +33,18 @@
       "styles.css",
       "asset_label_print.html",
       "final_chart_fix.js",
+      "build-info.json",
       "js/**/*",
       "libs/**/*",
       "data/**/*",
       "!data/*.json",
       "!**/*.{md,d.ts,ts,map}",
-      "!**/.{git,idea,vscode}/**"
+      "!**/.{git,idea,vscode}/**",
+      "!scripts/**",
+      "!tests/**",
+      "!_*.js",
+      "!*.ps1",
+      "!*.bat"
     ],
     "win": {
       "target": [

@@ -3,7 +3,14 @@ node_modules/
 
 # 构建产物
 dist/
+dist_build_*/
 build/out/
+build-info.json
+tests/smoke.test.*.log
+
+# 脚本 & 临时文件
+scripts/*.tmp.*
+*.tmp
 
 # Electron 缓存
 .electron-cache/

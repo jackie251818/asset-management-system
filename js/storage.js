@@ -905,9 +905,13 @@ class FileStorageManager {
 
     async _saveToServer(key, data) {
         try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
+                headers['X-Server-Token'] = window.__SERVER_TOKEN__;
+            }
             const resp = await fetch(`/api/save?key=${encodeURIComponent(key)}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({ key: key, value: data })
             });
             return resp.ok;
@@ -1175,7 +1179,11 @@ class FileStorageManager {
     async removeItem(key) {
         if (this.fileApiReady) {
             try {
-                await fetch(`/api/delete?key=${encodeURIComponent(key)}`, { method: 'DELETE' });
+                const reqInit = { method: 'DELETE' };
+                if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
+                    reqInit.headers = { 'X-Server-Token': window.__SERVER_TOKEN__ };
+                }
+                await fetch(`/api/delete?key=${encodeURIComponent(key)}`, reqInit);
             } catch(e) {}
         }
         
@@ -1291,6 +1299,43 @@ class FileStorageManager {
         return data;
     }
 
+    // ============ 版本兼容性（导入导出使用） ============
+
+    /**
+     * 校验导入数据版本与当前系统版本的兼容性
+     * @param {string} importVersion 导入文件声明的版本，例如 '2.0.0'
+     * @returns {boolean} true 表示兼容，可安全导入
+     */
+    checkVersionCompatibility(importVersion) {
+        // 无版本号按旧版本兼容（通过后续 assetsData 结构校验兜底）
+        if (!importVersion || typeof importVersion !== 'string') {
+            return true;
+        }
+        const current = String(this.dataVersion || '0.0.0').trim();
+        const incoming = importVersion.trim();
+
+        // 完全一致直接通过
+        if (current === incoming) return true;
+
+        const parseVer = (v) => {
+            const parts = String(v).split('.').map(n => parseInt(n, 10));
+            while (parts.length < 3) parts.push(0);
+            return parts.map(n => (Number.isNaN(n) ? 0 : n));
+        };
+
+        const [cMajor, cMinor, cPatch] = parseVer(current);
+        const [iMajor, iMinor] = parseVer(incoming);
+
+        // 主版本号必须一致；主版本相同则所有次版本均向后兼容（新字段导入时会有默认值）
+        if (iMajor !== cMajor) {
+            Logger.warn('Storage', `版本兼容性检查失败：导入版本=${incoming}，当前版本=${current}`);
+            return false;
+        }
+        // 同一主版本的导入文件一律兼容（不论 minor/patch，后续逻辑均做好字段兜底）
+        Logger.info('Storage', `版本兼容性检查通过：导入=${incoming}，当前=${current}`);
+        return true;
+    }
+
     // ============ 存储状态信息 ============
 
     getStorageInfo() {
@@ -1305,6 +1350,57 @@ class FileStorageManager {
             keys: Object.values(STORAGE_KEYS)
         };
         return info;
+    }
+
+    /**
+     * 导入事务快照（仅在 server 模式下调用 /api/exec {createImportSnapshot} 等端点
+     * 触发主进程 data 目录级复制；本地模式不做快照但返回 ok，让 UI 流程不受影响）
+     */
+    async createImportSnapshot() {
+        if (!this.fileApiReady) return { ok: true, snapshotId: '' };
+        try {
+            const resp = await fetch('/api/exec', {
+                method: 'POST',
+                headers: this._withTokenHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ action: 'createImportSnapshot' })
+            });
+            if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+            return await resp.json();
+        } catch (e) { return { ok: false, error: e.message }; }
+    }
+    async rollbackImportSnapshot(snapshotId) {
+        if (!this.fileApiReady) return { ok: true };
+        if (!snapshotId) return { ok: true };
+        try {
+            const resp = await fetch('/api/exec', {
+                method: 'POST',
+                headers: this._withTokenHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ action: 'rollbackImport', snapshotId })
+            });
+            if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+            return await resp.json();
+        } catch (e) { return { ok: false, error: e.message }; }
+    }
+    async commitImportSnapshot(snapshotId) {
+        if (!this.fileApiReady) return { ok: true };
+        if (!snapshotId) return { ok: true };
+        try {
+            const resp = await fetch('/api/exec', {
+                method: 'POST',
+                headers: this._withTokenHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ action: 'commitImport', snapshotId })
+            });
+            if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+            return await resp.json();
+        } catch (e) { return { ok: false, error: e.message }; }
+    }
+    /** 返回带 token 的请求头（不改变传入对象） */
+    _withTokenHeaders(headers) {
+        const out = Object.assign({}, headers || {});
+        if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
+            out['X-Server-Token'] = window.__SERVER_TOKEN__;
+        }
+        return out;
     }
 
     async checkUsage() {

@@ -35,6 +35,136 @@ function bindDataDependentEventListeners() {
         
         // 下载Excel模板
         document.getElementById('download-template').addEventListener('click', downloadExcelTemplate);
+
+        // 系统设置 - 数据目录面板：展示数据路径、一键打开、复制路径、版本号 / 构建时间
+        try {
+            const dataDirPanel = document.getElementById('data-dir-panel');
+            if (dataDirPanel) {
+                (async function initDataDirPanel() {
+                    const pathEl = document.getElementById('data-dir-path');
+                    const hintEl = document.getElementById('data-dir-hint');
+                    const verEl = document.getElementById('app-version');
+                    const buildEl = document.getElementById('app-build-time');
+                    const channelEl = document.getElementById('app-build-channel');
+                    let dataDir = '';
+                    let exeDir = '';
+                    let packageVersion = '';
+                    let buildTime = '';
+                    let buildChannel = '';
+                    try {
+                        if (window.__SERVER_URL__ && typeof fetch === 'function') {
+                            const resp = await fetch(window.__SERVER_URL__ + '/api/info');
+                            if (resp && resp.ok) {
+                                const info = await resp.json();
+                                if (info && info.success) {
+                                    dataDir = info.dataDir || '';
+                                    exeDir = info.portableExecutableDir || '';
+                                    packageVersion = info.packageVersion || '';
+                                    buildTime = info.buildTime || '';
+                                    buildChannel = info.buildChannel || '';
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                    // 兜底：直接读取主进程注入或 package
+                    const bi = (typeof window.__BUILD_INFO__ === 'object') ? window.__BUILD_INFO__ : null;
+                    if (bi) {
+                        if (!packageVersion) packageVersion = bi.version || '';
+                        if (!buildTime) buildTime = bi.buildTime || '';
+                        if (!buildChannel) buildChannel = bi.channel || '';
+                    }
+                    // 兜底：本地方案（file:// 打开时,data 目录 = document.location 同级 data/）
+                    if (!dataDir) {
+                        try {
+                            const here = (document.location && document.location.pathname) ? decodeURIComponent(document.location.pathname) : '';
+                            if (here && here.length > 1) {
+                                dataDir = here.replace(/^\/([A-Z]:\/)/i,'$1').replace(/[^/\\]+$/, '') + 'data';
+                            }
+                        } catch (_) {}
+                    }
+                    if (pathEl && dataDir) pathEl.textContent = dataDir;
+                    if (verEl) {
+                        verEl.textContent = packageVersion ? ('v' + packageVersion) : '未打包';
+                    }
+                    if (buildEl) {
+                        buildEl.textContent = buildTime ? new Date(buildTime).toLocaleString('zh-CN', { hour12: false }) : '源码模式';
+                    }
+                    if (channelEl) {
+                        if (buildChannel) channelEl.textContent = '渠道: ' + buildChannel;
+                        else channelEl.textContent = '';
+                    }
+                    if (hintEl) {
+                        const inExe = !!(exeDir && dataDir && (dataDir.indexOf(exeDir.replace(/\\/g,'/')) === 0 || dataDir.startsWith(exeDir)));
+                        if (inExe) {
+                            hintEl.innerHTML = '✅ 当前为<strong>传统便携模式</strong>：数据保存在 exe 旁的 data/ 目录（U盘/硬盘携带时使用）。如想关闭，请删除 exe 旁的 <code>.portable</code> / <code>便携模式.dat</code> 文件。';
+                        } else {
+                            hintEl.innerHTML = '🛡️ 当前数据存储在<strong>用户目录</strong>下（更安全，不会在桌面被误删）。如需「数据跟 exe 走」，请在 exe 旁边新建空文件 <code>.portable</code> 或 <code>便携模式.dat</code>，重启程序即生效。';
+                        }
+                    }
+
+                    function getTokenHeaders(extra) {
+                        const h = Object.assign({}, extra || {});
+                        if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
+                            h['X-Server-Token'] = window.__SERVER_TOKEN__;
+                        }
+                        return h;
+                    }
+
+                    const openBtn = document.getElementById('open-data-dir');
+                    if (openBtn) {
+                        openBtn.addEventListener('click', async () => {
+                            try {
+                                if (!window.__SERVER_URL__) {
+                                    showNotification('纯浏览器模式不支持直接打开目录，请手动复制上方路径', 'warning');
+                                    return;
+                                }
+                                const resp = await fetch(window.__SERVER_URL__ + '/api/exec', {
+                                    method: 'POST',
+                                    headers: getTokenHeaders({ 'Content-Type': 'application/json' }),
+                                    body: JSON.stringify({ action: 'openDataDir' })
+                                });
+                                if (resp && resp.ok) {
+                                    const r = await resp.json();
+                                    if (!r || !r.success) showNotification(r && r.error ? r.error : '打开目录失败', 'warning');
+                                } else if (resp && resp.status === 401) {
+                                    showNotification('权限校验失败，请刷新页面后重试', 'error');
+                                } else {
+                                    showNotification('无法调用本地服务器打开目录（当前为纯浏览器模式，请手动复制上方路径）', 'warning');
+                                }
+                            } catch (e) {
+                                showNotification('打开目录失败：' + (e && e.message ? e.message : e), 'error');
+                            }
+                        });
+                    }
+
+                    const copyBtn = document.getElementById('copy-data-dir');
+                    if (copyBtn) {
+                        copyBtn.addEventListener('click', async () => {
+                            if (!dataDir) { showNotification('暂无数据路径', 'warning'); return; }
+                            try {
+                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                    await navigator.clipboard.writeText(dataDir);
+                                    showNotification('路径已复制到剪贴板', 'success');
+                                } else {
+                                    const ta = document.createElement('textarea');
+                                    ta.value = dataDir;
+                                    document.body.appendChild(ta);
+                                    ta.select();
+                                    document.execCommand('copy');
+                                    document.body.removeChild(ta);
+                                    showNotification('路径已复制到剪贴板', 'success');
+                                }
+                            } catch (e) {
+                                showNotification('复制失败：' + (e && e.message ? e.message : e), 'error');
+                            }
+                        });
+                    }
+                })();
+            }
+        } catch (e) {
+            // 数据目录面板为可选增强,失败不阻塞其余逻辑
+            console.warn('[events] 数据目录面板初始化失败：', e && e.message ? e.message : e);
+        }
         
         // 状态选择联动显示损坏原因
         document.getElementById('status').addEventListener('change', (e) => {

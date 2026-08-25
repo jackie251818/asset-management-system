@@ -2,6 +2,37 @@
  * 资产列表渲染、分页、详情查看、附件展示、图片查看器
  * 从 script.js 拆分而来 - 请勿手动修改行号映射
  */
+
+// 状态徽章模板缓存（避免每个 createAssetTableRow 重建对象 + 字符串拼接）
+const __ASSET_STATUS_BADGE_CACHE = Object.create(null);
+(function initStatusBadgeCache() {
+    const items = [
+        ['active', 'status-active', 'fa-check-circle', '在用'],
+        ['idle', 'status-idle', 'fa-pause-circle', '闲置'],
+        ['damaged', 'status-damaged', 'fa-exclamation-circle', '损坏'],
+        ['maintenance', 'status-maintenance', 'fa-wrench', '维修中'],
+        ['retired', 'status-retired', 'fa-ban', '报废']
+    ];
+    for (const [k, cls, icon, text] of items) {
+        __ASSET_STATUS_BADGE_CACHE[k] = '<span class="status-badge ' + cls + '"><i class="fas ' + icon + '"></i> ' + text + '</span>';
+    }
+})();
+
+// HTML 转义：防止资产字段里包含 <>&"' 时把表格结构打坏或触发 XSS
+function __escapeHtml(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    if (s.length === 0) return '';
+    // 无特殊字符的常见场景快速返回
+    if (!/[<>&"']/.test(s)) return s;
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function renderAllAssets(filteredAssets = null) {
     // 防抖处理，避免频繁渲染（50ms，平衡性能与响应速度）
     if (renderTimeout) clearTimeout(renderTimeout);
@@ -10,47 +41,76 @@ function renderAllAssets(filteredAssets = null) {
         const tableBody = getElement('all-assets-table');
 
         if (!tableBody) return;
-        // 清空表格
-        tableBody.innerHTML = '';
-        
+
         let assetsToRender = filteredAssets || assetsData;
-        
+
         // 分页处理
-        const startIndex = (currentPage - 1) * recordsPerPage;
-        const endIndex = startIndex + recordsPerPage;
-        assetsToRender = assetsToRender.slice(startIndex, endIndex);
-        
-        if (assetsToRender.length === 0) {
-            // 资产表格固定 8 列（id/owner/type/brandModel/user/department/purchaseDate/操作）
-            const emptyRow = document.createElement('tr');
-            emptyRow.innerHTML = `<td colspan="8" style="text-align: center; padding: 20px;">暂无资产记录，请添加或导入资产</td>`;
-            tableBody.appendChild(emptyRow);
+        const totalCount = assetsToRender.length;
+        const totalPages = Math.max(1, Math.ceil(totalCount / recordsPerPage));
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+        const pageStart = (currentPage - 1) * recordsPerPage;
+        const pageEnd = Math.min(pageStart + recordsPerPage, totalCount);
+        const pageSlice = (totalCount > 0) ? assetsToRender.slice(pageStart, pageEnd) : [];
+
+        if (pageSlice.length === 0) {
+            // 资产表格固定 8 列（id/owner/type/brandModel/user/department/status/操作）
+            tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 20px;">暂无资产记录，请添加或导入资产</td></tr>';
         } else {
-            // 使用文档片段减少DOM重绘（同步追加，避免 requestAnimationFrame 在非active页面被节流导致行不渲染）
-            const fragment = document.createDocumentFragment();
-
-            // 批量创建元素
-            assetsToRender.forEach(asset => {
-                const { row } = createAssetTableRow(asset);
-                fragment.appendChild(row);
-            });
-
-            tableBody.appendChild(fragment);
+            // 单字符串拼接 + 一次 innerHTML 赋值，比 DocumentFragment + 每行 createElement/innerHTML 快
+            // （浏览器对整段 innerHTML 有专门的快速解析路径，N 次 DOM 插入合并为 1 次）
+            let rowsHtml = '';
+            for (let i = 0, len = pageSlice.length; i < len; i++) {
+                rowsHtml += buildAssetTableRowHtml(pageSlice[i], false);
+            }
+            tableBody.innerHTML = rowsHtml;
         }
-        
+
         // 渲染分页控件
-        renderPagination(filteredAssets);
+        renderPagination(filteredAssets, totalCount, totalPages);
     }, 50); // 50ms防抖延迟
 }
 
+// 基于字符串构建行 HTML（避免为每行创建 DOM 节点、避免创建独立对象）
+function buildAssetTableRowHtml(asset, showDamageReason) {
+    const assetId = asset ? asset.id : '';
+    const statusBadge = __ASSET_STATUS_BADGE_CACHE[asset && asset.status] || '';
+    const damageReasonCell = showDamageReason
+        ? '<td>' + __escapeHtml((asset && asset.damageReason) || '-') + '</td>'
+        : '';
+
+    return '<tr data-id="' + __escapeHtml(assetId) + '">' +
+        '<td>' + __escapeHtml(assetId) + '</td>' +
+        '<td>' + __escapeHtml(asset ? asset.owner : '') + '</td>' +
+        '<td>' + __escapeHtml(asset ? asset.type : '') + '</td>' +
+        '<td>' + __escapeHtml(asset ? asset.brandModel : '') + '</td>' +
+        '<td>' + __escapeHtml((asset && asset.user) || '-') + '</td>' +
+        '<td>' + __escapeHtml((asset && asset.department) || '-') + '</td>' +
+        damageReasonCell +
+        '<td>' + statusBadge + '</td>' +
+        '<td>' +
+            '<button class="btn btn-sm btn-primary view-asset" data-id="' + __escapeHtml(assetId) + '">' +
+                '<i class="fas fa-eye"></i> 查看' +
+            '</button>' +
+        '</td>' +
+    '</tr>';
+}
+
 // 渲染分页控件 - 根据实际数据量动态生成
-function renderPagination(filteredAssets = null) {
+// 允许传入预计算的 totalCount/totalPages（renderAllAssets 已算过），避免重复计算
+function renderPagination(filteredAssets = null, totalCountIn, totalPagesIn) {
     const paginationContainer = document.querySelector('#assets-page .pagination');
     if (!paginationContainer) return;
     
     // 获取数据
     let dataToUse = filteredAssets || assetsData;
-    const totalCount = dataToUse.length;
+    const totalCount = (typeof totalCountIn === 'number' && totalCountIn >= 0)
+        ? totalCountIn
+        : dataToUse.length;
+    let totalPages = (typeof totalPagesIn === 'number' && totalPagesIn >= 1)
+        ? totalPagesIn
+        : Math.ceil(totalCount / recordsPerPage);
+    if (totalPages < 1) totalPages = 1;
     
     // 更新"共X条记录"文本
     const totalRecordsEl = document.getElementById('total-records');
@@ -66,9 +126,7 @@ function renderPagination(filteredAssets = null) {
         return;
     }
     
-    // 计算总页数
-    const totalPages = Math.ceil(totalCount / recordsPerPage);
-    
+    // （totalPages 已在函数入口基于传入参数或 recordsPerPage 计算完成）
     // 确保currentPage不超过总页数
     if (currentPage > totalPages) {
         currentPage = totalPages;
@@ -187,46 +245,13 @@ function renderPagination(filteredAssets = null) {
 }
 
 // 创建资产表格行 - 优化DOM操作和状态处理
+// 说明：renderAllAssets 使用 buildAssetTableRowHtml 走字符串拼接（快路径）。
+// 这里保留 createElement 版本，用于单条插入 / 外部调用者需要拿到真实 DOM 的场景。
 function createAssetTableRow(asset, showDamageReason = false) {
     const row = document.createElement('tr');
-    
-    // 优化状态徽章生成，使用对象映射替代switch语句
-    const statusBadgeMap = {
-        'active': '<span class="status-badge status-active"><i class="fas fa-check-circle"></i> 在用</span>',
-        'idle': '<span class="status-badge status-idle"><i class="fas fa-pause-circle"></i> 闲置</span>',
-        'damaged': '<span class="status-badge status-damaged"><i class="fas fa-exclamation-circle"></i> 损坏</span>',
-        'maintenance': '<span class="status-badge status-maintenance"><i class="fas fa-wrench"></i> 维修中</span>',
-        'retired': '<span class="status-badge status-retired"><i class="fas fa-ban"></i> 报废</span>'
-    };
-    
-    const statusBadge = statusBadgeMap[asset.status] || '';
-    
-    // 根据是否显示损坏原因构建表格行
-    let damageReasonCell = '';
-    let colspan = 8;
-    
-    if (showDamageReason) {
-        damageReasonCell = `<td>${asset.damageReason || '-'}</td>`;
-        colspan = 9;
-    }
-    
-    // 使用模板字符串一次性设置innerHTML，减少DOM操作
-    row.innerHTML = `
-        <td>${asset.id}</td>
-        <td>${asset.owner}</td>
-        <td>${asset.type}</td>
-        <td>${asset.brandModel}</td>
-        <td>${asset.user || '-'}</td>
-        <td>${asset.department || '-'}</td>
-        ${damageReasonCell}
-        <td>${statusBadge}</td>
-        <td>
-            <button class="btn btn-sm btn-primary view-asset" data-id="${asset.id}">
-                <i class="fas fa-eye"></i> 查看
-            </button>
-        </td>
-    `;
-    
+    if (asset && asset.id) row.setAttribute('data-id', String(asset.id));
+    row.innerHTML = buildAssetTableRowHtml(asset, showDamageReason);
+    const colspan = showDamageReason ? 9 : 8;
     return { row, colspan };
 }
 
@@ -325,56 +350,69 @@ function renderAttachments(attachments) {
     const container = getElement('attachments-container');
     const list = getElement('attachments-list');
     const noAttachments = getElement('no-attachments');
-    
+
     list.innerHTML = '';
-    
+
     if (!attachments || attachments.length === 0) {
         noAttachments.style.display = 'block';
         list.style.display = 'none';
         return;
     }
-    
+
     noAttachments.style.display = 'none';
     list.style.display = 'block';
-    
+
     // 使用文档片段减少DOM重绘
     const fragment = document.createDocumentFragment();
     attachments.forEach(attachment => {
-        const isImage = attachment.type.startsWith('image/');
+        const isImage = attachment.type && attachment.type.startsWith('image/');
         const isPdf = attachment.type === 'application/pdf';
-        
+
         const item = document.createElement('div');
         item.className = 'attachment-item';
-        item.dataset.type = attachment.type;
+        item.dataset.type = attachment.type || '';
         item.dataset.url = attachment.url || '';
 
-        // 生成缩略图：优先用已有的 thumbnail，否则尝试从 url 生成
+        // 图片/PDF 缩略图懒加载：src 留空，真实值放 data-src，滚动到视口再赋值
+        // 避免打开详情模态一次性展开几百 MB base64 导致页面卡顿
+        function lazyImgAttrs(src) {
+            if (!src) return { src: 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200"><rect width="100%" height="100%" fill="%23f3f4f6"/></svg>'), dataSrc: '' };
+            return {
+                src: 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200"><rect width="100%" height="100%" fill="%23f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="%239ca3af" font-size="14" dy=".3em">loading...</text></svg>'),
+                dataSrc: src
+            };
+        }
+
         let thumbnailHtml = '';
         if (isImage) {
-            thumbnailHtml = `<img src="${attachment.thumbnail || attachment.url || ''}" class="attachment-thumbnail" alt="${attachment.name}" loading="lazy">`;
+            const src = attachment.thumbnail || attachment.url || '';
+            const a = lazyImgAttrs(src);
+            thumbnailHtml = `<img src="${a.src}" data-src="${a.dataSrc}" class="attachment-thumbnail att-lazy" alt="${attachment.name}" loading="lazy" decoding="async">`;
         } else if (isPdf) {
             if (attachment.thumbnail) {
-                thumbnailHtml = `<img src="${attachment.thumbnail}" class="attachment-thumbnail" alt="${attachment.name}" loading="lazy" style="object-fit: contain; border: 1px solid #e0e0e0; border-radius: 4px; background: #fff;">`;
+                const a = lazyImgAttrs(attachment.thumbnail);
+                thumbnailHtml = `<img src="${a.src}" data-src="${a.dataSrc}" class="attachment-thumbnail att-lazy" alt="${attachment.name}" loading="lazy" decoding="async" style="object-fit: contain; border: 1px solid var(--border, #e0e0e0); border-radius: 4px; background: #fff;">`;
             } else {
                 thumbnailHtml = `
                     <div class="attachment-thumbnail" style="display: flex; align-items: center; justify-content: center;">
-                        <i class="fas fa-file-pdf fa-5x" style="color: #ff4d4f;"></i>
+                        <i class="fas fa-file-pdf fa-5x" style="color: var(--danger, #ff4d4f);"></i>
                     </div>
                 `;
-                // 异步生成PDF缩略图（url 可能在 IndexedDB 中，此处跳过）
+                // url 在 IndexedDB 里，异步生成缩略图
                 if (attachment.url && typeof createPdfThumbnail === 'function') {
                     createPdfThumbnail(attachment.url, 160, 200, (thumb) => {
                         if (thumb) {
                             attachment.thumbnail = thumb;
                             const img = item.querySelector('.attachment-thumbnail');
                             if (img) {
-                                img.replaceWith(Object.assign(document.createElement('img'), {
-                                    src: thumb,
-                                    alt: attachment.name,
-                                    loading: 'lazy',
-                                    className: 'attachment-thumbnail',
-                                    style: 'object-fit: contain; border: 1px solid #e0e0e0; border-radius: 4px; background: #fff;'
-                                }));
+                                const repl = document.createElement('img');
+                                repl.src = thumb;
+                                repl.alt = attachment.name;
+                                repl.loading = 'lazy';
+                                repl.decoding = 'async';
+                                repl.className = 'attachment-thumbnail att-lazy';
+                                repl.style.cssText = 'object-fit: contain; border: 1px solid var(--border, #e0e0e0); border-radius: 4px; background: #fff;';
+                                img.replaceWith(repl);
                             }
                         }
                     }, attachment.name);
@@ -383,21 +421,45 @@ function renderAttachments(attachments) {
         } else {
             thumbnailHtml = `
                 <div class="attachment-thumbnail" style="display: flex; align-items: center; justify-content: center;">
-                    <i class="fas fa-file fa-5x" style="color: #3081eb;"></i>
+                    <i class="fas fa-file fa-5x" style="color: var(--brand, #3081eb);"></i>
                 </div>
             `;
         }
-        
+
         item.innerHTML = `
             ${thumbnailHtml}
-            <div class="attachment-name">${attachment.name}</div>
+            <div class="attachment-name">${attachment.name || ''}</div>
         `;
-        
+
         item.addEventListener('click', () => openFileViewer(attachment));
         fragment.appendChild(item);
     });
-    
+
     list.appendChild(fragment);
+
+    // IntersectionObserver：只把进入视口的懒加载图真实赋值（从 data-src → src）
+    if (!window.__attLazyObserver) {
+        try {
+            const io = new IntersectionObserver((entries) => {
+                for (const e of entries) {
+                    if (!e.isIntersecting) continue;
+                    const el = e.target;
+                    const src = el.getAttribute('data-src');
+                    if (src) { el.src = src; el.removeAttribute('data-src'); }
+                    io.unobserve(el);
+                }
+            }, { rootMargin: '200px' });
+            window.__attLazyObserver = io;
+        } catch (_) { /* 老内核不支持 IO，则下面兜底直接赋值 */ }
+    }
+    const io = window.__attLazyObserver;
+    list.querySelectorAll('img.att-lazy').forEach(img => {
+        if (io && typeof io.observe === 'function') { io.observe(img); }
+        else {
+            const ds = img.getAttribute('data-src');
+            if (ds) { img.src = ds; img.removeAttribute('data-src'); }
+        }
+    });
 }
 
 // 打开文件查看器
