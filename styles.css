@@ -160,6 +160,95 @@ input:focus, select:focus, textarea:focus {
     --border-card: #e2e8f0;
 }
 
+/* ================================== 主题系统(浅色/深色/纯黑/科技) ================================== */
+/* 深色模式:标准深蓝灰,与默认浅色共用变量名,200+ 处 var() 引用自动生效 */
+html[data-theme="dark"] {
+    --brand: #4d9aff;
+    --brand-hover: #6daeff;
+    --brand-light: #12365e;
+    --brand-dark: #8cbeff;
+    --bg-body: #0f1724;
+    --bg-surface: #1a2434;
+    --bg-soft: #131c2a;
+    --bg-tag: #1c3050;
+    --gray-light: #141d2c;
+    --gray: #2c3a52;
+    --gray-border: #2c3a52;
+    --gray-border-soft: #24304a;
+    --gray-dark: #8fa0b8;
+    --text-color: #e6edf6;
+    --text-secondary: #a8b6ca;
+    --info-bg: #12283f;
+    --info-fg: #9cc3ef;
+    --info-fg-muted: #7ba3d4;
+    --info-fg-soft: #5d82b0;
+    --border: #2c3a52;
+    --border-input: #2c3a52;
+    --border-card: #2c3a52;
+    --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    --card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+}
+
+/* 纯黑皮肤:AMOLED 友好,全黑背景 + 灰阶极简,品牌色降饱和 */
+html[data-theme="black"] {
+    --brand: #22b8d4;
+    --brand-hover: #3fcbe5;
+    --brand-light: #0e2430;
+    --brand-dark: #5fd4e8;
+    --bg-body: #000000;
+    --bg-surface: #0c0c0f;
+    --bg-soft: #08080a;
+    --bg-tag: #101418;
+    --gray-light: #09090b;
+    --gray: #222228;
+    --gray-border: #232329;
+    --gray-border-soft: #1a1a1f;
+    --gray-dark: #77777f;
+    --text-color: #ececf1;
+    --text-secondary: #9a9aa5;
+    --info-bg: #0d1417;
+    --info-fg: #8fd8e8;
+    --info-fg-muted: #6a9fae;
+    --info-fg-soft: #4e7a86;
+    --border: #232329;
+    --border-input: #232329;
+    --border-card: #232329;
+    --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+    --card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.9);
+    color-scheme: dark;
+}
+
+/* 科技风皮肤:深空蓝底 + 霓虹青/紫高光 */
+html[data-theme="tech"] {
+    --brand: #00e5ff;
+    --brand-hover: #4defff;
+    --brand-light: #062a33;
+    --brand-dark: #7df3ff;
+    --success-color: #00e676;
+    --bg-body: #030713;
+    --bg-surface: #081020;
+    --bg-soft: #050c1a;
+    --bg-tag: #06202e;
+    --gray-light: #060d1c;
+    --gray: #10364a;
+    --gray-border: #0e3a4a;
+    --gray-border-soft: #0a2a38;
+    --gray-dark: #5c93a8;
+    --text-color: #d8f7ff;
+    --text-secondary: #85bccf;
+    --info-bg: #062033;
+    --info-fg: #7fe3ff;
+    --info-fg-muted: #58b0cc;
+    --info-fg-soft: #3d8299;
+    --border: #0e3a4a;
+    --border-input: #0e3a4a;
+    --border-card: #0e3a4a;
+    --card-shadow: 0 0 14px rgba(0, 229, 255, 0.07), 0 4px 12px rgba(0, 0, 0, 0.5);
+    --card-shadow-hover: 0 0 20px rgba(0, 229, 255, 0.18), 0 8px 20px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+}
+
 /* 加载指示器 */
 .loading-indicator {
     display: flex;
@@ -2061,9 +2150,236 @@ table tbody tr:last-child td {
     .sidebar .menu-item {
         padding: 10px 16px;
     }
-    
+
     .sidebar .logo {
         padding: 10px 0;
     }
+}
+
+/* ================================== D2 深色系皮肤补丁(dark/black/tech 共用) ================================== */
+/* 覆盖硬编码的浅色表面(侧边栏/卡片/表格/表单/移动端顶栏等) */
+html[data-theme="dark"] .sidebar,
+html[data-theme="black"] .sidebar,
+html[data-theme="tech"] .sidebar {
+    background-color: var(--bg-surface);
+    box-shadow: 1px 0 2px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="dark"] .sidebar .logo,
+html[data-theme="black"] .sidebar .logo,
+html[data-theme="tech"] .sidebar .logo {
+    background-color: var(--bg-surface);
+    border-bottom-color: var(--border-card);
+}
+html[data-theme="dark"] .btn-secondary,
+html[data-theme="black"] .btn-secondary,
+html[data-theme="tech"] .btn-secondary {
+    background-color: var(--bg-surface);
+    color: var(--text-color);
+    border-color: var(--border);
+}
+html[data-theme="dark"] .btn-secondary:hover,
+html[data-theme="black"] .btn-secondary:hover,
+html[data-theme="tech"] .btn-secondary:hover {
+    background-color: var(--bg-soft);
+}
+html[data-theme="dark"] .table-container,
+html[data-theme="black"] .table-container,
+html[data-theme="tech"] .table-container,
+html[data-theme="dark"] .stat-card,
+html[data-theme="black"] .stat-card,
+html[data-theme="tech"] .stat-card,
+html[data-theme="dark"] .detail-group,
+html[data-theme="black"] .detail-group,
+html[data-theme="tech"] .detail-group,
+html[data-theme="dark"] .attachments-container,
+html[data-theme="black"] .attachments-container,
+html[data-theme="tech"] .attachments-container,
+html[data-theme="dark"] .settings-form-group,
+html[data-theme="black"] .settings-form-group,
+html[data-theme="tech"] .settings-form-group,
+html[data-theme="dark"] .attachment-item,
+html[data-theme="black"] .attachment-item,
+html[data-theme="tech"] .attachment-item,
+html[data-theme="dark"] .file-preview,
+html[data-theme="black"] .file-preview,
+html[data-theme="tech"] .file-preview,
+html[data-theme="dark"] .data-management,
+html[data-theme="black"] .data-management,
+html[data-theme="tech"] .data-management,
+html[data-theme="dark"] .mobile-topbar,
+html[data-theme="black"] .mobile-topbar,
+html[data-theme="tech"] .mobile-topbar {
+    background-color: var(--bg-surface);
+}
+/* 表格行悬浮/斑马纹(如存在硬编码) */
+html[data-theme="dark"] tbody tr:hover,
+html[data-theme="black"] tbody tr:hover,
+html[data-theme="tech"] tbody tr:hover {
+    background-color: var(--bg-soft);
+}
+/* custom-select 下拉面板 */
+html[data-theme="dark"] .custom-select-add,
+html[data-theme="black"] .custom-select-add,
+html[data-theme="tech"] .custom-select-add {
+    background: var(--bg-surface);
+}
+html[data-theme="dark"] .custom-select-option:hover,
+html[data-theme="black"] .custom-select-option:hover,
+html[data-theme="tech"] .custom-select-option:hover {
+    background: var(--bg-tag);
+}
+/* 表格表头(原硬编码近白底,深色下需配深底浅字) */
+html[data-theme="dark"] table th,
+html[data-theme="black"] table th,
+html[data-theme="tech"] table th {
+    background-color: var(--bg-soft);
+    border-bottom-color: var(--border-card);
+}
+html[data-theme="dark"] table th.sortable:hover,
+html[data-theme="black"] table th.sortable:hover,
+html[data-theme="tech"] table th.sortable:hover {
+    background-color: var(--gray-light);
+}
+/* custom-select 选中项/分割线(原硬编码浅蓝底与浅灰线) */
+html[data-theme="dark"] .custom-select-option.selected,
+html[data-theme="black"] .custom-select-option.selected,
+html[data-theme="tech"] .custom-select-option.selected {
+    background: var(--bg-tag);
+}
+html[data-theme="dark"] .custom-select-add,
+html[data-theme="black"] .custom-select-add,
+html[data-theme="tech"] .custom-select-add {
+    border-bottom-color: var(--border);
+}
+html[data-theme="dark"] .custom-select-input,
+html[data-theme="black"] .custom-select-input,
+html[data-theme="tech"] .custom-select-input {
+    border-color: var(--border-input);
+}
+/* custom-select 触发器与下拉面板(原硬编码 white 白底) */
+html[data-theme="dark"] .custom-select-display,
+html[data-theme="black"] .custom-select-display,
+html[data-theme="tech"] .custom-select-display {
+    background-color: var(--bg-surface);
+    border-color: var(--border-input);
+}
+html[data-theme="dark"] .custom-select:hover .custom-select-display,
+html[data-theme="black"] .custom-select:hover .custom-select-display,
+html[data-theme="tech"] .custom-select:hover .custom-select-display {
+    border-color: var(--gray-dark);
+}
+html[data-theme="dark"] .custom-select-dropdown,
+html[data-theme="black"] .custom-select-dropdown,
+html[data-theme="tech"] .custom-select-dropdown {
+    background: var(--bg-surface);
+    border-color: var(--border-card);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+html[data-theme="dark"] .custom-select-options,
+html[data-theme="black"] .custom-select-options,
+html[data-theme="tech"] .custom-select-options {
+    scrollbar-color: var(--gray-border) transparent;
+}
+html[data-theme="dark"] .custom-select-options::-webkit-scrollbar-thumb,
+html[data-theme="black"] .custom-select-options::-webkit-scrollbar-thumb,
+html[data-theme="tech"] .custom-select-options::-webkit-scrollbar-thumb {
+    background-color: var(--gray-border);
+}
+/* 筛选下拉/分页栏/重置按钮(原硬编码 white 白底) */
+html[data-theme="dark"] .filter-select,
+html[data-theme="black"] .filter-select,
+html[data-theme="tech"] .filter-select {
+    background-color: var(--bg-surface);
+    border-color: var(--border-input);
+}
+html[data-theme="dark"] .pagination,
+html[data-theme="black"] .pagination,
+html[data-theme="tech"] .pagination {
+    background: var(--bg-surface);
+    border-color: var(--border-card);
+}
+html[data-theme="dark"] #reset-filter-btn,
+html[data-theme="black"] #reset-filter-btn,
+html[data-theme="tech"] #reset-filter-btn {
+    background-color: var(--bg-surface);
+    border-color: var(--border);
+}
+/* 主题切换按钮(侧边栏底部) */
+.theme-toggle-btn {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition-base);
+    border-top: 1px solid var(--border-card);
+    font-size: 14px;
+    user-select: none;
+}
+.theme-toggle-btn:hover {
+    color: var(--brand);
+    background-color: var(--gray-light);
+}
+.theme-toggle-btn .theme-icon-slot {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.theme-toggle-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+.mobile-theme-btn {
+    display: none;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 6px;
+    margin-left: auto;
+}
+.mobile-theme-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+/* ================================== D3 纯黑专属:极简灰阶 ================================== */
+html[data-theme="black"] .sidebar .menu-item.active {
+    background-color: rgba(34, 184, 212, 0.08);
+}
+html[data-theme="black"] .theme-toggle-btn {
+    border-top-color: #1a1a1f;
+}
+
+/* ================================== D4 科技风专属:霓虹辉光 ================================== */
+html[data-theme="tech"] body {
+    background-image:
+        radial-gradient(ellipse 80% 45% at 50% -8%, rgba(0, 229, 255, 0.06), transparent),
+        radial-gradient(ellipse 60% 40% at 95% 108%, rgba(139, 92, 246, 0.08), transparent);
+}
+html[data-theme="tech"] .sidebar {
+    box-shadow: 1px 0 0 rgba(0, 229, 255, 0.15), 6px 0 24px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="tech"] .sidebar .menu-item.active {
+    background-color: rgba(0, 229, 255, 0.1);
+    box-shadow: inset 3px 0 0 var(--brand), 0 0 12px rgba(0, 229, 255, 0.15);
+}
+html[data-theme="tech"] .stat-card:hover {
+    box-shadow: 0 0 18px rgba(0, 229, 255, 0.2), 0 8px 20px rgba(0, 0, 0, 0.6);
+}
+html[data-theme="tech"] .btn-primary {
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+}
+html[data-theme="tech"] ::-webkit-scrollbar-thumb {
+    background: rgba(0, 229, 255, 0.3);
+}
+html[data-theme="tech"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 229, 255, 0.5);
 }
     
