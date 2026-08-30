@@ -1,6 +1,6 @@
 {
   "name": "asset-management-system",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "电脑资产管理系统 - 便携式离线版",
   "main": "main.js",
   "author": "Asset Management",
