@@ -437,7 +437,8 @@ function generateCardFromTemplate(asset, template) {
 // 生成默认格式的固定资产登记卡
 function generateDefaultCard(asset) {
     try {
-        const companyName = '尚毅集团';
+        // 默认公司名取系统名称(系统设置 → updateSystemTitle → document.title), 不硬编码历史公司名
+        const companyName = (document.title || '').trim() || '固定资产管理系统';
         
         // 格式化价值
         const formatValue = (v) => {

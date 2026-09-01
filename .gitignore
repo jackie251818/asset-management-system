@@ -1,16 +1,30 @@
 # 依赖
 node_modules/
+server/node_modules/
 
 # 构建产物
 dist/
 dist_build_*/
+server/dist/
 build/out/
 build-info.json
 tests/smoke.test.*.log
 
+# 打包产物 / 临时大文件
+*.tar
+server-src.tar
+_inject.js
+server/deploy/asset-server.exe
+server/deploy/nginx/
+server/deploy/cert/
+
 # 脚本 & 临时文件
 scripts/*.tmp.*
 *.tmp
+2168
+e_out.log
+e_err.log
+electron_out.log
 
 # Electron 缓存
 .electron-cache/
@@ -30,9 +44,11 @@ desktop.ini
 data/*.js
 data/*.json
 !data/.gitkeep
+server/data/
 
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo

@@ -122,6 +122,12 @@ function switchPage(pageName) {
             if (typeof updateFileSyncStatus === 'function') {
                 try { updateFileSyncStatus(); } catch(e) {}
             }
+        },
+        'users': function() {
+            // 用户管理页: 仅 C/S admin 可见, 切入时刷新列表
+            if (typeof renderUsersList === 'function') {
+                renderUsersList();
+            }
         }
     };
     

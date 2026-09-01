@@ -1,0 +1,42 @@
+# 固定资产管理系统服务端 - systemd 单元 (CentOS 7 专用)
+#
+# 与通用版 asset-server.service 的差异(详见部署文档第 12 章):
+#   - CentOS 7 为 glibc 2.17, 无法运行 pkg 交叉产物 asset-server-linux 与官方 Node 18+ 二进制,
+#     只能以「源码 + unofficial-builds glibc-217 版 Node」方式运行 → 本单元仅提供源码 ExecStart;
+#   - Node 由 unofficial-builds tarball 装入 /usr/local → ExecStart 用 /usr/local/bin/node;
+#   - CentOS 7 的 nologin 路径为 /sbin/nologin
+#     (创建运行用户: useradd -r -s /sbin/nologin asset);
+#   - 字段集已按 CentOS 7 自带 systemd 219 校验, 可直接使用。
+#
+# 安装:
+#   sudo cp asset-server-centos7.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now asset-server
+# 日志: journalctl -u asset-server -f
+
+[Unit]
+Description=Asset Management Server (Koa + SQLite) - CentOS 7
+After=network.target
+
+[Service]
+Type=simple
+User=asset
+WorkingDirectory=/opt/asset-server/server
+# unofficial-builds glibc-217 版 Node 的默认安装路径; 若装在别处请相应修改
+ExecStart=/usr/local/bin/node /opt/asset-server/server/src/index.js
+# 安全模型与 Windows 版一致: 服务端仅监听本机回环, 由 nginx 80/443 对外反代;
+# 若无 nginx 直连局域网, 改为 0.0.0.0 并用 firewalld 放行 3456
+Environment=ASSET_HOST=127.0.0.1
+Environment=ASSET_PORT=3456
+# 数据目录(缺省为工作目录下 data/); 独立数据目录示例(需 chown asset:asset):
+# Environment=ASSET_DATA_DIR=/var/lib/asset-server
+Restart=always
+RestartSec=3
+# 以下两项在 systemd 219 (CentOS 7) 下受支持
+NoNewPrivileges=true
+PrivateTmp=true
+# 内网低并发无需调整; 如有需要可放开:
+# LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target

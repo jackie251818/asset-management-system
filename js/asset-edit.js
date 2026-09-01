@@ -629,7 +629,7 @@ function saveEditedAsset() {
     };
 
     // 统一的保存逻辑：合并附件、更新数据、持久化、刷新视图，完成后清理 UI
-    const finalizeSave = (newFiles) => {
+    const finalizeSave = async (newFiles) => {
         // 从 DOM 读取未被删除的已有附件（用户可能手动删除了部分）
         const previewContainer = document.getElementById('edit-file-previews');
         const remainingPreviews = previewContainer
@@ -643,6 +643,34 @@ function saveEditedAsset() {
             .filter(a => a !== null && a !== undefined);
 
         updatedAsset.attachments = [...remainingAttachments, ...newFiles];
+
+        // ============ C/S 多人模式: REST 乐观锁更新 ============
+        if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+            try {
+                // updatedAsset 继承自 currentAsset, 携带 version 字段 → 服务端乐观锁校验
+                const doc = await ApiClient.updateAsset(assetId, updatedAsset);
+                assetsData[index] = doc;
+                ApiClient.markLocalChange();
+                Logger.info('AssetEdit', '编辑保存完成(服务端):', assetId, '| 新版本:', doc.version);
+                saveToLocalStorage();   // C/S 模式下仅刷新本地缓存
+                viewAssetDetails(assetId);
+                cleanupEditUI();
+                alert('资产信息已更新');
+            } catch (err) {
+                Logger.error('AssetEdit', '服务端更新失败:', err);
+                if (err && err.code === 40901) {
+                    alert('保存冲突：数据已被其他用户修改，您的修改未保存。\n请从列表重新打开该资产(获取最新数据)后再编辑。');
+                } else if (err && err.code === 40300) {
+                    alert('保存失败：当前账号没有编辑资产的权限');
+                } else {
+                    alert('保存失败：' + ((err && err.message) || '未知错误'));
+                }
+                cleanupEditUI();
+            }
+            return;
+        }
+
+        // ============ 本地模式 / Electron 旧服务模式: 原有逻辑 ============
         assetsData[index] = updatedAsset;
         Logger.info('AssetEdit', '编辑保存完成:', assetId, '| 附件总数:', updatedAsset.attachments.length);
         hasUnsavedChanges = true;
@@ -731,6 +759,42 @@ function confirmDeleteAsset() {
     if (!assetId || assetId === '未选择资产') return;
 
     if (confirm('确定要删除资产 ' + assetId + ' 吗？此操作不可恢复！')) {
+        // ============ C/S 多人模式: REST 删除(级联维保记录/附件) ============
+        if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+            Logger.info('AssetEdit', '删除资产(服务端):', assetId, '| 删除前总数:', assetsData.length);
+            ApiClient.deleteAsset(assetId).then(() => {
+                assetsData = assetsData.filter(asset => asset.id !== assetId);
+                ApiClient.markLocalChange();
+                Logger.info('AssetEdit', '删除完成，剩余:', assetsData.length);
+                saveToLocalStorage();   // C/S 模式下仅刷新本地缓存
+                updateStatistics();
+                renderRecentAssets();
+                renderDamagedAssets();
+                renderAllAssets();
+                switchPage('assets');
+                alert('资产已删除');
+            }).catch(err => {
+                Logger.error('AssetEdit', '服务端删除失败:', err);
+                if (err && err.code === 40300) {
+                    alert('删除失败：当前账号没有删除资产的权限');
+                } else if (err && err.code === 40400) {
+                    alert('删除失败：该资产已被其他用户删除');
+                    // 同步本地缓存并刷新列表
+                    assetsData = assetsData.filter(asset => asset.id !== assetId);
+                    saveToLocalStorage();
+                    updateStatistics();
+                    renderRecentAssets();
+                    renderDamagedAssets();
+                    renderAllAssets();
+                    switchPage('assets');
+                } else {
+                    alert('删除失败：' + ((err && err.message) || '未知错误'));
+                }
+            });
+            return;
+        }
+
+        // ============ 本地模式 / Electron 旧服务模式: 原有逻辑 ============
         Logger.info('AssetEdit', '删除资产:', assetId, '| 删除前总数:', assetsData.length);
         assetsData = assetsData.filter(asset => asset.id !== assetId);
         Logger.info('AssetEdit', '删除完成，剩余:', assetsData.length);
@@ -739,10 +803,10 @@ function confirmDeleteAsset() {
         renderRecentAssets();
         renderDamagedAssets();
         renderAllAssets();
-        
+
         // 保存到本地存储
         saveToLocalStorage();
-        
+
         // 回到资产列表
         switchPage('assets');
         alert('资产已删除');

@@ -20,14 +20,19 @@
         window.__LOCAL_DATA__ = window.__LOCAL_DATA__ || {};
     </script>
     <!-- 加载本地数据文件（必须在 storage.js 之前加载） -->
-    <script src="data/assetManagementData.js"></script>
-    <script src="data/userStateData.js"></script>
-    <script src="data/custom_options_owner.js"></script>
-    <script src="data/custom_options_type.js"></script>
-    <script src="data/custom_options_department.js"></script>
-    <script src="data/custom_options_owner_deleted.js"></script>
-    <script src="data/custom_options_type_deleted.js"></script>
-    <script src="data/custom_options_department_deleted.js"></script>
+    <!-- 仅 file:// 协议加载: HTTP/C/S 模式下 data/*.js 属于过期本地快照, 注入后会经 IndexedDB 迁移污染下拉选项等本地回退路径 -->
+    <script>
+        if (window.location.protocol === 'file:') {
+            document.write('<script src="data/assetManagementData.js"><\/script>');
+            document.write('<script src="data/userStateData.js"><\/script>');
+            document.write('<script src="data/custom_options_owner.js"><\/script>');
+            document.write('<script src="data/custom_options_type.js"><\/script>');
+            document.write('<script src="data/custom_options_department.js"><\/script>');
+            document.write('<script src="data/custom_options_owner_deleted.js"><\/script>');
+            document.write('<script src="data/custom_options_type_deleted.js"><\/script>');
+            document.write('<script src="data/custom_options_department_deleted.js"><\/script>');
+        }
+    </script>
     <link rel="stylesheet" href="libs/font-awesome.min.css">
     <!-- 备用SVG图标，确保在字体文件缺失时图标仍能显示 -->
     <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
@@ -452,10 +457,33 @@
                 <i class="fas fa-cog"></i>
                 <span>系统设置</span>
             </div>
+            <div class="menu-item" data-target="users" style="display:none;">
+                <i class="fas fa-users-cog"></i>
+                <span>用户管理</span>
+            </div>
             <!-- 主题切换(浅色/深色/纯黑/科技) -->
             <div class="theme-toggle-btn" id="theme-toggle" title="切换主题">
                 <span class="theme-icon-slot"></span>
                 <span class="theme-label">深色</span>
+            </div>
+            <!-- 切换运行模式(全局可见: 单机版 / C/S 版 都能切) -->
+            <div class="menu-item" id="switch-mode-btn" title="切换运行模式(单机版 / C/S 版)">
+                <i class="fas fa-exchange-alt"></i>
+                <span>切换运行模式</span>
+            </div>
+            <!-- C/S 多人模式用户区(仅服务端登录模式显示) -->
+            <div class="cs-user-box" id="cs-user-box" style="display:none;">
+                <div class="cs-user-info">
+                    <i class="fas fa-user-circle"></i>
+                    <span class="cs-user-name" id="cs-user-name">未登录</span>
+                    <span class="cs-user-role" id="cs-user-role"></span>
+                </div>
+                <button class="cs-changepwd-btn" id="cs-changepwd-btn" title="修改登录密码">
+                    <i class="fas fa-key"></i><span>修改密码</span>
+                </button>
+                <button class="cs-logout-btn" id="cs-logout-btn" title="退出登录">
+                    <i class="fas fa-sign-out-alt"></i><span>退出登录</span>
+                </button>
             </div>
         </div>
 
@@ -470,8 +498,22 @@
                 <button class="mobile-theme-btn" id="mobile-theme-btn" aria-label="切换主题" title="切换主题"></button>
             </div>
 
+            <!-- C/S 多人更新提示横幅(其他用户修改数据后显示) -->
+            <div id="cs-update-banner" style="display:none; background:#e6f4ff; border:1px solid #91caff; border-radius:6px; padding:12px 16px; margin:10px 0; align-items:center; gap:12px; flex-wrap:wrap;">
+                <i class="fas fa-sync-alt" style="color:#1677ff; font-size:18px;"></i>
+                <span style="flex:1; min-width:200px; color:#003a8c;">
+                    <strong>多人协作提示：</strong>服务器数据已被其他用户更新，当前页面显示的内容可能已过期。
+                </span>
+                <button class="btn btn-primary btn-sm" id="cs-banner-refresh-btn" style="white-space:nowrap;">
+                    <i class="fas fa-redo"></i> 立即刷新
+                </button>
+                <button class="btn btn-secondary btn-sm" id="cs-banner-dismiss-btn" style="padding:4px 10px;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
             <!-- 本地模式文件同步提示横幅（仅 file:// 协议且未连接文件夹时显示） -->
-            <div id="file-sync-banner" style="display:none; background:#fffbe6; border:1px solid #ffe58f; border-radius:6px; padding:12px 16px; margin:10px 0; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <div id="file-sync-banner" style="display:none; background:#fffbe6; border:1px solid #ffe58f; border-radius:6px; padding:12px 16px; margin:10px 0; align-items:center; gap:12px; flex-wrap:wrap;">
                 <i class="fas fa-info-circle" style="color:#fa8c16; font-size:18px;"></i>
                 <span style="flex:1; min-width:200px; color:#614700;">
                     <strong>本地模式提示：</strong>当前直接打开 index.html，数据仅保存在当前浏览器内。
@@ -1346,6 +1388,62 @@
                     </div>
                 </div>
 
+                <!-- C/S 服务器连接与数据同步（Electron 客户端模式） -->
+                <div class="card" id="cs-server-card" style="display:none;">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-server"></i> 服务器连接</h2>
+                    </div>
+                    <div style="padding: 14px 0;">
+                        <!-- 服务器信息展示区 -->
+                        <div id="cs-server-info" style="padding: 12px 16px; background:#f0f7ff; border:1px solid #cfe3ff; border-radius:6px; margin-bottom:16px; font-size:13px; color:#2b4a7a;">
+                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                <span style="font-weight:600;"><i class="fas fa-circle" style="color:#10b981;font-size:10px;"></i> 已连接</span>
+                                <code id="cs-server-url" style="background:#e6f1ff;padding:2px 8px;border-radius:4px;"></code>
+                                <span style="color:#9ca3af;">·</span>
+                                <span id="cs-server-name"></span>
+                                <span id="cs-server-version" style="color:#9ca3af;font-size:12px;"></span>
+                            </div>
+                            <div style="margin-top:8px; color:#5376a8;">
+                                当前登录：<strong id="cs-current-user">—</strong>
+                                <span id="cs-current-role" style="margin-left:6px;padding:2px 8px;border-radius:10px;font-size:12px;background:#dbeafe;color:#1d4ed8;"></span>
+                            </div>
+                        </div>
+
+                        <!-- 数据双向同步区（从单机迁移到服务器 / 从服务器迁移回单机） -->
+                        <div id="cs-sync-panel">
+                            <h3 style="font-size:14px; margin-bottom:8px;"><i class="fas fa-exchange-alt"></i> 本地 ↔ 服务器 数据同步</h3>
+                            <p style="color:#6b7280; font-size:12px; margin-bottom:12px;">
+                                用于在 <b>单机版本地 data/ 目录</b> 和 <b>C/S 服务器</b> 之间迁移数据。
+                                拉取=服务器→本地（覆盖本地 7 个数据键）；推送=本地→服务器（全量替换服务端数据）。
+                                需要填写服务器账号密码。
+                            </p>
+                            <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px; align-items:flex-end;">
+                                <div style="flex:1; min-width:200px;">
+                                    <label style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">服务器地址</label>
+                                    <input type="text" id="cs-sync-url" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;" placeholder="http://192.168.40.251:3456">
+                                </div>
+                                <div style="min-width:130px;">
+                                    <label style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">用户名</label>
+                                    <input type="text" id="cs-sync-user" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;" placeholder="admin">
+                                </div>
+                                <div style="min-width:130px;">
+                                    <label style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">密码</label>
+                                    <input type="password" id="cs-sync-pwd" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;" placeholder="登录密码">
+                                </div>
+                                <div style="display:flex; gap:8px;">
+                                    <button class="btn btn-primary" id="cs-sync-pull" style="padding:8px 14px;">
+                                        <i class="fas fa-download"></i> 拉取到本地
+                                    </button>
+                                    <button class="btn btn-secondary" id="cs-sync-push" style="padding:8px 14px;">
+                                        <i class="fas fa-upload"></i> 推送到服务器
+                                    </button>
+                                </div>
+                            </div>
+                            <pre id="cs-sync-result" style="display:none; padding:10px 14px; border-radius:6px; font-size:12px; font-family:consolas,monospace; margin:0; white-space:pre-wrap; word-break:break-all; max-height:240px; overflow:auto;"></pre>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 文件同步设置（本地直接打开模式） -->
                 <div class="card">
                     <div class="card-header">
@@ -1375,8 +1473,84 @@
                 </div>
             </div>
         </div>
+
+        <!-- 用户管理页(仅 C/S 模式 admin 可见) -->
+        <div class="page-content" id="users-page">
+            <div style="max-width: 760px; margin: 0 auto;">
+                <h2 style="margin-bottom: 18px;"><i class="fas fa-users-cog"></i> 用户管理</h2>
+                <p style="color: #6b7280; font-size: 13px; margin-bottom: 18px;">管理可登录服务端的用户账号。角色: 管理员(全部权限) / 普通用户(数据读写)。</p>
+
+                <!-- 新建用户表单 -->
+                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:18px 20px;margin-bottom:20px;">
+                    <h3 style="font-size:15px;margin-bottom:14px;"><i class="fas fa-user-plus"></i> 新建用户</h3>
+                    <form id="user-create-form" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+                        <div style="flex:1;min-width:140px;">
+                            <label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">用户名</label>
+                            <input type="text" id="new-username" required style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;" placeholder="登录用户名">
+                        </div>
+                        <div style="flex:1;min-width:140px;">
+                            <label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">密码</label>
+                            <input type="password" id="new-password" required style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;" placeholder="至少 6 位">
+                        </div>
+                        <div style="min-width:120px;">
+                            <label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">角色</label>
+                            <select id="new-role" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                                <option value="editor">普通用户</option>
+                                <option value="admin">管理员</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="user-create-btn" style="padding:8px 18px;">
+                            <i class="fas fa-plus"></i> 创建
+                        </button>
+                    </form>
+                </div>
+
+                <!-- 用户列表 -->
+                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+                    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                        <thead style="background:#f9fafb;">
+                            <tr>
+                                <th style="padding:10px 14px;text-align:left;border-bottom:1px solid #e5e7eb;">用户名</th>
+                                <th style="padding:10px 14px;text-align:left;border-bottom:1px solid #e5e7eb;">角色</th>
+                                <th style="padding:10px 14px;text-align:left;border-bottom:1px solid #e5e7eb;">创建时间</th>
+                                <th style="padding:10px 14px;text-align:right;border-bottom:1px solid #e5e7eb;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-tbody"></tbody>
+                    </table>
+                </div>
+                <p style="color:#9ca3af;font-size:12px;margin-top:12px;">注: 管理员角色(admin)可管理用户与全部数据; 普通用户(editor)仅可读写数据, 不能管理用户。</p>
+            </div>
+        </div>
     </div>
-    
+
+    <!-- 修改密码弹窗(C/S 模式所有已登录用户) -->
+    <div id="change-pwd-modal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width:420px;margin-top:15vh;">
+            <span class="close-btn" id="change-pwd-close">&times;</span>
+            <h2 class="modal-title"><i class="fas fa-key"></i> 修改登录密码</h2>
+            <div style="padding:20px 0;">
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:13px;color:#6b7280;margin-bottom:6px;">当前密码</label>
+                    <input type="password" id="change-pwd-old" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;" placeholder="输入当前密码">
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:13px;color:#6b7280;margin-bottom:6px;">新密码 <span style="color:#9ca3af;font-size:12px;">(至少 6 位)</span></label>
+                    <input type="password" id="change-pwd-new" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;" placeholder="输入新密码">
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:13px;color:#6b7280;margin-bottom:6px;">确认新密码</label>
+                    <input type="password" id="change-pwd-confirm" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;" placeholder="再次输入新密码">
+                </div>
+                <div id="change-pwd-error" style="display:none;color:#ef4444;font-size:13px;margin-bottom:12px;"></div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button class="btn btn-secondary" id="change-pwd-cancel" style="padding:8px 20px;">取消</button>
+                    <button class="btn btn-primary" id="change-pwd-submit" style="padding:8px 20px;"><i class="fas fa-check"></i> 确认修改</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 图片查看器模态框 -->
     <div id="image-viewer-modal" class="modal">
         <div class="modal-content">
@@ -1409,6 +1583,7 @@
     <script src="libs/xlsx.full.min.js" defer onerror="alert('XLSX库加载失败，请确保已正确下载并放置到libs目录');"></script>
     <!-- 功能模块按依赖顺序加载，defer保证按序执行 -->
     <script src="js/theme.js" defer></script>
+    <script src="js/api.js" defer></script>
     <script src="js/config.js" defer></script>
     <script src="js/storage.js" defer></script>
     <script src="js/notifications.js" defer></script>
@@ -1423,6 +1598,7 @@
     <script src="js/charts.js" defer></script>
     <script src="js/maintenance.js" defer></script>
     <script src="js/events.js" defer></script>
+    <script src="js/users.js" defer></script>
     <script src="js/init.js" defer></script>
     <script src="final_chart_fix.js" defer></script>
 </body>

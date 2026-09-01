@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 注意: 不要加 CSP 的 script-src 限制 —— 本页面逻辑为内联 <script>, 加了会导致脚本被静默拦截、所有按钮无反应 -->
+<title>连接服务器设置 - 固定资产管理系统</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        font-family: "Microsoft YaHei", sans-serif;
+        background: #f5f7fa;
+        margin: 0;
+        padding: 16px 20px;
+        font-size: 14px;
+        color: #1f2937;
+    }
+    .card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 16px 18px;
+        box-shadow: 0 4px 16px rgba(0,0,0,.05);
+    }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    .sub { color: #6b7280; font-size: 12px; margin: 0 0 14px; }
+    .mode-row { display: flex; gap: 10px; margin-bottom: 12px; }
+    .mode-box {
+        flex: 1;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 9px 10px;
+        cursor: pointer;
+        background: #fff;
+        transition: all .15s;
+    }
+    .mode-box.active { border-color: #3081eb; background: #eff6ff; }
+    .mode-box b { display: block; font-size: 13px; margin-bottom: 2px; }
+    .mode-box span { font-size: 11px; color: #6b7280; }
+    .mode-box input { display: none; }
+    label { display: block; margin: 10px 0 5px; font-weight: bold; font-size: 13px; }
+    .input-row { display: flex; gap: 8px; align-items: center; }
+    .input-row input[type=text], .input-row input[type=password] {
+        flex: 1;
+        padding: 8px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 7px;
+        font-size: 13px;
+        outline: none;
+    }
+    .input-row input:focus { border-color: #3081eb; }
+    .input-row input:disabled { background: #f3f4f6; color: #9ca3af; }
+    .btn-row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    button {
+        padding: 8px 14px;
+        border-radius: 7px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #374151;
+        font-size: 13px;
+        cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #f9fafb; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.primary { background: #3081eb; border-color: #3081eb; color: #fff; }
+    button.primary:hover:not(:disabled) { background: #2a6fd4; }
+    button.success { background: #10b981; border-color: #10b981; color: #fff; }
+    button.success:hover:not(:disabled) { background: #059669; }
+    button.warn { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+    button.warn:hover:not(:disabled) { background: #d97706; }
+    button.danger { color: #b91c1c; border-color: #fca5a5; }
+    button.small { padding: 4px 10px; font-size: 12px; }
+    .result { margin-top: 10px; font-size: 12px; min-height: 16px; line-height: 1.6; }
+    .result.ok { color: #15803d; }
+    .result.err { color: #b91c1c; }
+    .result.wait { color: #6b7280; }
+
+    /* 服务端信息面板 */
+    .sv-info {
+        margin-top: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px 12px;
+        background: #f9fafb;
+        font-size: 12px;
+        line-height: 1.7;
+    }
+    .sv-info h3 { margin: 0 0 8px; font-size: 13px; color: #374151; }
+    .sv-info .kv { display: flex; gap: 6px; }
+    .sv-info .kv b { color: #6b7280; min-width: 72px; font-weight: normal; }
+    .sv-info .kv span { color: #1f2937; word-break: break-all; }
+    .sv-info .err-box { color: #b91c1c; }
+
+    /* 数据同步区域 */
+    .sync-section {
+        margin-top: 14px;
+        border-top: 1px dashed #e5e7eb;
+        padding-top: 14px;
+    }
+    .sync-section h3 { margin: 0 0 10px; font-size: 13px; color: #374151; }
+    .auth-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .auth-row input {
+        flex: 1;
+        padding: 7px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 7px;
+        font-size: 13px;
+        outline: none;
+    }
+    .sync-btn-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .sync-result {
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #f3f4f6;
+        color: #374151;
+        min-height: 16px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+    }
+    .sync-result.ok { background: #dcfce7; color: #166534; }
+    .sync-result.err { background: #fee2e2; color: #991b1b; }
+    .sync-result.wait { background: #fef3c7; color: #92400e; }
+
+    /* 二次确认弹窗 */
+    .modal-mask {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,.4);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 9999;
+    }
+    .modal {
+        background: #fff; border-radius: 10px;
+        padding: 18px 22px; max-width: 380px;
+        box-shadow: 0 12px 32px rgba(0,0,0,.2);
+    }
+    .modal h3 { margin: 0 0 10px; font-size: 15px; color: #1f2937; }
+    .modal p { margin: 0 0 14px; color: #6b7280; font-size: 13px; line-height: 1.7; }
+    .modal .mbtn-row { display: flex; justify-content: flex-end; gap: 8px; }
+
+    .footnote {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px dashed #e5e7eb;
+        font-size: 12px;
+        color: #9ca3af;
+        line-height: 1.7;
+    }
+</style>
+</head>
+<body>
+<div class="card">
+    <h1>连接服务器设置</h1>
+    <p class="sub">选择本程序的运行方式，保存并重启后生效</p>
+
+    <div class="mode-row">
+        <label class="mode-box" id="box-standalone">
+            <input type="radio" name="mode" value="standalone">
+            <b>单机模式</b>
+            <span>本机独立使用，数据保存在本机</span>
+        </label>
+        <label class="mode-box" id="box-client">
+            <input type="radio" name="mode" value="client">
+            <b>连接服务器</b>
+            <span>多人共用服务端数据（C/S 模式）</span>
+        </label>
+    </div>
+
+    <!-- client-area: 服务器地址 + 测试 + 服务端信息 -->
+    <div id="client-area" style="display:none">
+        <label for="url">服务器地址</label>
+        <div class="input-row">
+            <input type="text" id="url" placeholder="例如 http://192.168.1.100:3456" autocomplete="off" spellcheck="false">
+            <button type="button" id="btn-info" class="small">获取信息</button>
+        </div>
+        <div class="result" id="result"></div>
+        <!-- 服务端信息面板(动态填充) -->
+        <div id="server-info-box" style="display:none"></div>
+
+        <!-- 数据同步区域 -->
+        <div class="sync-section">
+            <h3>数据同步</h3>
+            <p style="font-size:12px;color:#6b7280;margin:0 0 10px">
+                单机模式下可手动将本地数据与服务端数据互相同步。需要服务端账号。
+                注意：同步为<b>全量覆盖</b>，请确认方向后再操作。
+            </p>
+            <div class="auth-row">
+                <input type="text" id="sync-user" placeholder="服务端用户名 (如 admin)" autocomplete="off" spellcheck="false">
+                <input type="password" id="sync-pass" placeholder="服务端密码" autocomplete="off">
+            </div>
+            <div class="sync-btn-row">
+                <button type="button" id="btn-pull" class="success">服务器 → 本地 (拉取)</button>
+                <button type="button" id="btn-push" class="warn">本地 → 服务器 (推送)</button>
+            </div>
+            <div class="sync-result" id="sync-result" style="display:none"></div>
+        </div>
+    </div>
+
+    <div class="btn-row">
+        <button type="button" id="btn-test">测试连接</button>
+        <button type="button" id="btn-save" class="primary">保存并重启</button>
+        <button type="button" id="btn-clear" class="danger" style="display:none">清除应用内设置</button>
+    </div>
+
+    <div class="footnote" id="footnote"></div>
+</div>
+
+<!-- 二次确认弹窗 (模板, JS 复制 DOM) -->
+<div id="modal-template" style="display:none">
+    <div class="modal-mask">
+        <div class="modal">
+            <h3 id="modal-title">确认操作</h3>
+            <p id="modal-desc">确定要执行此操作吗？</p>
+            <div class="mbtn-row">
+                <button type="button" id="modal-cancel">取消</button>
+                <button type="button" id="modal-ok" class="danger">确定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    var els = {
+        boxStandalone: document.getElementById('box-standalone'),
+        boxClient: document.getElementById('box-client'),
+        clientArea: document.getElementById('client-area'),
+        url: document.getElementById('url'),
+        btnInfo: document.getElementById('btn-info'),
+        result: document.getElementById('result'),
+        serverInfoBox: document.getElementById('server-info-box'),
+        btnTest: document.getElementById('btn-test'),
+        btnSave: document.getElementById('btn-save'),
+        btnClear: document.getElementById('btn-clear'),
+        footnote: document.getElementById('footnote'),
+        syncUser: document.getElementById('sync-user'),
+        syncPass: document.getElementById('sync-pass'),
+        btnPull: document.getElementById('btn-pull'),
+        btnPush: document.getElementById('btn-push'),
+        syncResult: document.getElementById('sync-result')
+    };
+
+    function getMode() {
+        return els.boxClient.classList.contains('active') ? 'client' : 'standalone';
+    }
+
+    function setMode(mode) {
+        els.boxClient.classList.toggle('active', mode === 'client');
+        els.boxStandalone.classList.toggle('active', mode !== 'client');
+        els.clientArea.style.display = (mode === 'client') ? '' : 'none';
+        els.serverInfoBox.style.display = 'none';
+        els.syncResult.style.display = 'none';
+    }
+
+    function showResult(cls, text) {
+        els.result.className = 'result ' + cls;
+        els.result.textContent = text;
+    }
+
+    function showSyncResult(cls, text) {
+        els.syncResult.style.display = '';
+        els.syncResult.className = 'sync-result ' + cls;
+        els.syncResult.textContent = text;
+    }
+
+    /** 渲染服务端信息面板 */
+    function renderServerInfo(info) {
+        if (!info) { els.serverInfoBox.style.display = 'none'; return; }
+        els.serverInfoBox.style.display = '';
+        if (info.error) {
+            els.serverInfoBox.innerHTML = '<div class="sv-info err-box">' + info.error + '</div>';
+            return;
+        }
+        els.serverInfoBox.innerHTML =
+            '<div class="sv-info">' +
+            '<h3>服务端信息</h3>' +
+            '<div class="kv"><b>服务名称</b><span>' + (info.name || '-') + '</span></div>' +
+            '<div class="kv"><b>版本</b><span>' + (info.version || '-') + '</span></div>' +
+            '<div class="kv"><b>服务器时间</b><span>' + (info.serverTime || '-') + '</span></div>' +
+            '<div class="kv"><b>数据库路径</b><span>' + (info.dbPath || '-') + '</span></div>' +
+            '<div class="kv"><b>C/S 架构</b><span>' + (info.cs ? '是' : '否') + '</span></div>' +
+            '</div>';
+    }
+
+    function refreshFootnote(state) {
+        var lines = [];
+        if (state.appSettingExists) {
+            lines.push('当前生效：应用内设置（优先级最高）。清除后将按 exe 旁配置文件 / 默认单机启动。');
+        } else if (state.fileConfigExists) {
+            lines.push('当前生效：exe 旁 server.config.json（管理员预配置）。在此保存设置将优先于该文件。');
+        } else {
+            lines.push('当前生效：默认单机模式（未检测到任何连接配置）。');
+        }
+        els.footnote.textContent = lines.join('');
+        els.btnClear.style.display = state.appSettingExists ? '' : 'none';
+    }
+
+    /** 确认弹窗: title + desc → Promise (true=ok, false=cancel) */
+    function confirmDialog(title, desc) {
+        return new Promise(function (resolve) {
+            var tpl = document.getElementById('modal-template').innerHTML;
+            var wrapper = document.createElement('div');
+            wrapper.innerHTML = tpl;
+            wrapper.querySelector('#modal-title').textContent = title;
+            wrapper.querySelector('#modal-desc').textContent = desc;
+            var mask = wrapper.querySelector('.modal-mask');
+            document.body.appendChild(mask);
+            function cleanup() { try { mask.remove(); } catch (_) {} }
+            mask.querySelector('#modal-cancel').addEventListener('click', function () { cleanup(); resolve(false); });
+            mask.querySelector('#modal-ok').addEventListener('click', function () { cleanup(); resolve(true); });
+            mask.addEventListener('click', function (e) { if (e.target === mask) { cleanup(); resolve(false); } });
+        });
+    }
+
+    els.boxStandalone.addEventListener('click', function () { setMode('standalone'); });
+    els.boxClient.addEventListener('click', function () { setMode('client'); });
+
+    els.btnTest.addEventListener('click', function () {
+        var url = els.url.value.trim();
+        if (!url) { showResult('err', '请先填写服务器地址'); return; }
+        els.btnTest.disabled = true;
+        showResult('wait', '正在连接 ' + url + ' ...');
+        window.connApi.test(url).then(function (r) {
+            els.btnTest.disabled = false;
+            showResult(r.ok ? 'ok' : 'err', (r.ok ? '√ ' : '× ') + r.message);
+        }).catch(function (e) {
+            els.btnTest.disabled = false;
+            showResult('err', '× 测试失败: ' + (e && e.message || e));
+        });
+    });
+
+    els.btnInfo.addEventListener('click', function () {
+        var url = els.url.value.trim();
+        if (!url) { showResult('err', '请先填写服务器地址'); return; }
+        els.btnInfo.disabled = true;
+        els.btnInfo.textContent = '获取中...';
+        window.connApi.serverInfo(url).then(function (r) {
+            els.btnInfo.disabled = false;
+            els.btnInfo.textContent = '获取信息';
+            if (r.ok) {
+                renderServerInfo(r.info);
+                showResult('ok', '√ 服务端信息获取成功');
+            } else {
+                renderServerInfo({ error: '× ' + r.message });
+                showResult('err', '× ' + r.message);
+            }
+        }).catch(function (e) {
+            els.btnInfo.disabled = false;
+            els.btnInfo.textContent = '获取信息';
+            renderServerInfo({ error: '× ' + (e && e.message || e) });
+        });
+    });
+
+    els.url.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { els.btnTest.click(); }
+    });
+
+    els.btnSave.addEventListener('click', function () {
+        var mode = getMode();
+        var payload = { mode: mode, serverUrl: mode === 'client' ? els.url.value.trim() : '' };
+        if (mode === 'client' && !/^https?:\/\/.+/i.test(payload.serverUrl)) {
+            showResult('err', '服务器地址无效, 应为 http://服务器IP:端口');
+            return;
+        }
+        els.btnSave.disabled = true;
+        window.connApi.save(payload).then(function (r) {
+            if (!r.ok) { els.btnSave.disabled = false; showResult('err', r.message); return; }
+            showResult('ok', '已保存, 应用即将重启...');
+            return window.connApi.apply();
+        }).catch(function (e) {
+            els.btnSave.disabled = false;
+            showResult('err', '保存失败: ' + (e && e.message || e));
+        });
+    });
+
+    els.btnClear.addEventListener('click', function () {
+        els.btnClear.disabled = true;
+        window.connApi.clear().then(function () {
+            showResult('ok', '已清除应用内设置, 应用即将重启...');
+            return window.connApi.apply();
+        }).catch(function (e) {
+            els.btnClear.disabled = false;
+            showResult('err', '清除失败: ' + (e && e.message || e));
+        });
+    });
+
+    // ============ 数据同步按钮 ============
+
+    function getSyncAuth() {
+        return { url: els.url.value.trim(), username: els.syncUser.value.trim(), password: els.syncPass.value };
+    }
+
+    els.btnPull.addEventListener('click', function () {
+        var auth = getSyncAuth();
+        if (!/^https?:\/\/.+/i.test(auth.url)) { showSyncResult('err', '请先填写有效的服务器地址'); return; }
+        if (!auth.username || !auth.password) { showSyncResult('err', '请填写服务端用户名和密码'); return; }
+        confirmDialog('确认拉取数据',
+            '将从 ' + auth.url + ' 拉取全部资产与自定义选项数据到本地 data/ 目录。\n' +
+            '本地原有数据将被覆盖（仅覆盖同步的 7 个数据键，userStateData 等个人设置不受影响）。\n\n确定继续吗？'
+        ).then(function (ok) {
+            if (!ok) return;
+            els.btnPull.disabled = true; els.btnPush.disabled = true;
+            showSyncResult('wait', '正在从服务端拉取数据...');
+            window.connApi.syncPull(auth).then(function (r) {
+                els.btnPull.disabled = false; els.btnPush.disabled = false;
+                if (r.ok) {
+                    var lines = ['✓ 拉取成功'];
+                    lines.push('服务端: ' + (r.serverInfo && r.serverInfo.name || '-') + ' v' + (r.serverInfo && r.serverInfo.version || '-'));
+                    lines.push('同步资产数: ' + r.totalAssets);
+                    var pulled = r.pulled || {};
+                    Object.keys(pulled).forEach(function (k) { lines.push('  ' + k + ': ' + pulled[k] + ' 条'); });
+                    showSyncResult('ok', lines.join('\n'));
+                } else {
+                    showSyncResult('err', '× ' + r.message + (r.errors && r.errors.length ? '\n详细: ' + r.errors.join('\n      ') : ''));
+                }
+            }).catch(function (e) {
+                els.btnPull.disabled = false; els.btnPush.disabled = false;
+                showSyncResult('err', '× 同步失败: ' + (e && e.message || e));
+            });
+        });
+    });
+
+    els.btnPush.addEventListener('click', function () {
+        var auth = getSyncAuth();
+        if (!/^https?:\/\/.+/i.test(auth.url)) { showSyncResult('err', '请先填写有效的服务器地址'); return; }
+        if (!auth.username || !auth.password) { showSyncResult('err', '请填写服务端用户名和密码'); return; }
+        confirmDialog('⚠ 警告：推送将覆盖服务端数据',
+            '将把本地 data/ 目录中的全部资产与自定义选项数据推送到 ' + auth.url + ' 。\n\n' +
+            '服务端原有资产数据将被**全量删除后重新插入**（compat /api/save 是整体替换语义）。\n' +
+            'userStateData 等个人设置不会推送。\n\n' +
+            '此操作不可撤销，确定继续吗？'
+        ).then(function (ok) {
+            if (!ok) return;
+            els.btnPull.disabled = true; els.btnPush.disabled = true;
+            showSyncResult('wait', '正在向服务端推送数据...');
+            window.connApi.syncPush(auth).then(function (r) {
+                els.btnPull.disabled = false; els.btnPush.disabled = false;
+                if (r.ok) {
+                    var lines = ['✓ 推送成功'];
+                    lines.push('服务端: ' + (r.serverInfo && r.serverInfo.name || '-') + ' v' + (r.serverInfo && r.serverInfo.version || '-'));
+                    lines.push('推送资产数: ' + r.totalAssets);
+                    var pushed = r.pushed || {};
+                    Object.keys(pushed).forEach(function (k) { lines.push('  ' + k + ': ' + pushed[k] + ' 条'); });
+                    if (Object.keys(pushed).length === 0) lines.push('  (本地无数据，已跳过所有键)');
+                    showSyncResult('ok', lines.join('\n'));
+                } else {
+                    showSyncResult('err', '× ' + r.message + (r.errors && r.errors.length ? '\n详细: ' + r.errors.join('\n      ') : ''));
+                }
+            }).catch(function (e) {
+                els.btnPull.disabled = false; els.btnPush.disabled = false;
+                showSyncResult('err', '× 同步失败: ' + (e && e.message || e));
+            });
+        });
+    });
+
+    // ============ 初始化 ============
+
+    window.connApi.get().then(function (state) {
+        if (state.mode === 'client') {
+            setMode('client');
+            els.url.value = state.serverUrl || '';
+        } else if (state.mode === 'standalone') {
+            setMode('standalone');
+        } else if (state.mode === 'invalid') {
+            setMode('client');
+            showResult('err', '已保存的设置损坏, 请重新配置');
+        } else {
+            setMode('standalone');
+        }
+        refreshFootnote(state);
+        // 如果已有服务器地址, 自动获取一次服务端信息
+        if (els.clientArea.style.display !== 'none' && els.url.value.trim()) {
+            els.btnInfo.click();
+        }
+    }).catch(function (e) {
+        showResult('err', '读取当前设置失败: ' + (e && e.message || e));
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "name": "asset-management-server",
+  "version": "1.0.0",
+  "description": "固定资产管理系统 - C/S 架构服务端（阶段1+2）",
+  "main": "src/index.js",
+  "bin": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/migrate.js",
+    "test": "node tests/api.test.js",
+    "build:exe": "node scripts/build-exe.js",
+    "build:linux": "node scripts/build-exe.js --linux"
+  },
+  "dependencies": {
+    "@koa/router": "^12.0.1",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.10.0",
+    "jsonwebtoken": "^9.0.2",
+    "koa": "^2.15.3",
+    "koa-bodyparser": "^4.4.1"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.22.0"
+  },
+  "pkg": {
+    "targets": [
+      "node22-win-x64"
+    ],
+    "assets": [
+      "node_modules/better-sqlite3/build/Release/*.node",
+      "node_modules/better-sqlite3/deps/*.gyp",
+      "node_modules/generator-function/**/*",
+      "../index.html",
+      "../login.html",
+      "../styles.css",
+      "../final_chart_fix.js",
+      "../build-info.json",
+      "../js/**/*",
+      "../libs/**/*",
+      "../data/*.js"
+    ]
+  }
+}

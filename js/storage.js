@@ -18,6 +18,7 @@ class FileStorageManager {
 
         // 存储模式
         this.fileApiReady = false;      // 服务器 API 可用
+        this.csMode = false;            // C/S 多人模式(新服务端, /api/info cs=true, 需登录+JWT)
         this.indexedDBClient = null;     // IndexedDB 实例
         this.fileSystemHandle = null;    // File System Access API 目录句柄
         this.dataDirHandle = null;       // data 子目录句柄
@@ -121,22 +122,57 @@ class FileStorageManager {
     }
 
     async _detectServerApi() {
-        // file:// 协议下直接返回 false，不尝试 fetch
+        // file:// 协议: 复用 ApiClient 的探测结果(避免双源不一致)
+        //   - 用户选过 C/S 且保存了 cs_server_url → ApiClient.csMode=true, 此处同步
+        //   - 否则 → 本地模式
         if (window.location.protocol === 'file:') {
+            if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+                this.fileApiReady = true;
+                this.csMode = true;
+                Logger.info('Storage', 'file:// 已配置远端 C/S 服务端: ' + (ApiClient.baseURL || ''));
+                return;
+            }
             this.fileApiReady = false;
+            this.csMode = false;
             Logger.info('Storage', 'file:// 协议，使用本地模式');
             return;
         }
+        // http(s):// 协议: 优先复用 ApiClient 探测结果(同源, ApiClient 已探测 /api/info)
+        if (typeof ApiClient !== 'undefined') {
+            // ApiClient 已 await ready() 完成(_detect 在 init 时跑过), 直接读结果
+            if (ApiClient.embeddedMode || ApiClient.csMode) {
+                this.fileApiReady = true;
+                this.csMode = !!ApiClient.csMode;
+                Logger.info('Storage', ApiClient.csMode ? '已连接 C/S 服务端(登录模式)' : '服务器 API 已连接(Electron 内嵌服务模式)');
+                return;
+            }
+        }
+        // 回退: 独立探测(ApiClient 不可用或探测失败时)
+        try {
+            const resp = await fetch('/api/info', { method: 'GET' });
+            if (resp.ok) {
+                const info = await resp.json().catch(() => null);
+                this.fileApiReady = true;
+                if (info && info.cs === true) {
+                    this.csMode = true;
+                    Logger.info('Storage', '已连接 C/S 服务端(登录模式)');
+                    return;
+                }
+                Logger.info('Storage', '服务器 API 已连接(Electron 内嵌服务模式)');
+                return;
+            }
+        } catch (e) { /* 继续尝试旧探测 */ }
+        // 兼容旧探测方式(Electron 旧内嵌服务可能无 /api/info)
         try {
             const resp = await fetch('/api/list', { method: 'GET' });
             if (resp.ok) {
                 this.fileApiReady = true;
                 Logger.info('Storage', '服务器 API 已连接');
+                return;
             }
-        } catch (e) {
-            this.fileApiReady = false;
-            Logger.info('Storage', '服务器不可用，使用本地模式');
-        }
+        } catch (e) {}
+        this.fileApiReady = false;
+        Logger.info('Storage', '服务器不可用，使用本地模式');
     }
 
     // ============ IndexedDB 实现 ============
@@ -905,6 +941,12 @@ class FileStorageManager {
 
     async _saveToServer(key, data) {
         try {
+            // C/S 模式: 统一走 ApiClient(自动携带 JWT, 401 自动跳登录)
+            if (this.csMode && typeof ApiClient !== 'undefined') {
+                await ApiClient.request('POST', '/api/save?key=' + encodeURIComponent(key), { key: key, value: data });
+                return true;
+            }
+            // Electron 旧内嵌服务兼容(X-Server-Token)
             const headers = { 'Content-Type': 'application/json' };
             if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
                 headers['X-Server-Token'] = window.__SERVER_TOKEN__;
@@ -922,11 +964,23 @@ class FileStorageManager {
 
     async _loadFromServer(key) {
         try {
+            // C/S 模式: 统一走 ApiClient; 服务器无该键(404)视为空数据
+            if (this.csMode && typeof ApiClient !== 'undefined') {
+                try {
+                    const payload = await ApiClient.request('GET', '/api/load?key=' + encodeURIComponent(key));
+                    return (payload && payload.success) ? payload.data : null;
+                } catch (e) {
+                    if (e && e.code === 40400) return null;  // 键不存在 → 空
+                    throw e;  // 网络/鉴权等错误向上抛, 由调用方处理
+                }
+            }
+            // Electron 旧内嵌服务兼容
             const resp = await fetch(`/api/load?key=${encodeURIComponent(key)}`);
             if (!resp.ok) return null;
             const result = await resp.json();
             return result.success ? result.data : null;
         } catch (e) {
+            if (e && e.code && e.code !== 40400) throw e;  // C/S 模式的业务错误向上抛
             return null;
         }
     }
@@ -1011,7 +1065,17 @@ class FileStorageManager {
         Logger.debug('Storage', 'setItem:', key);
 
         if (this.fileApiReady) {
-            // 服务器模式:Server + IndexedDB + localStorage 三重冗余
+            // C/S 多人模式: 服务器是唯一可信源, 写失败直接抛错(禁用本地回退, 避免多端数据分叉)
+            if (this.csMode) {
+                if (typeof ApiClient !== 'undefined') {
+                    await ApiClient.request('POST', '/api/save?key=' + encodeURIComponent(key), { key: key, value: data });
+                    return true;
+                }
+                const okServer = await this._saveToServer(key, data);
+                if (!okServer) throw new Error('服务器保存失败: ' + key);
+                return true;
+            }
+            // Electron 旧服务模式: Server + IndexedDB + localStorage 三重冗余
             // P0-2: 增加 IndexedDB 冗余备份,避免服务器写入失败时数据只停留在被剥离附件的 localStorage
             const serverOk = await this._saveToServer(key, data);
             if (!serverOk) {
@@ -1063,7 +1127,11 @@ class FileStorageManager {
         }
 
         if (this.fileApiReady) {
-            // 服务器模式:Server → window.__LOCAL_DATA__ → localStorage → IndexedDB(冗余备份)
+            // C/S 多人模式: 仅以服务器为准(禁用本地回退, 防止读到其他端已过期的冗余副本)
+            if (this.csMode) {
+                return await this._loadFromServer(key);
+            }
+            // Electron 旧服务模式:Server → window.__LOCAL_DATA__ → localStorage → IndexedDB(冗余备份)
             // P0-2: IndexedDB 作为最后兜底,即使服务器文件损坏,内存中的 IndexedDB 仍能恢复
             const serverData = await this._loadFromServer(key);
             if (serverData !== null) {
@@ -1072,6 +1140,11 @@ class FileStorageManager {
                 await this._saveToIndexedDB(key, serverData);
                 await this._saveToIndexedDB(`__ts_${key}__`, Date.now());
                 return serverData;
+            }
+            // HTTP(S) 环境下服务端无数据即为空 —— 禁止回退本地缓存
+            // (服务器模式下的本地副本只可能是过期脏数据, 回退会导致旧选项/旧资产"复活")
+            if (typeof window !== 'undefined' && window.location && window.location.protocol !== 'file:') {
+                return null;
             }
             // 服务器没有数据，尝试从 window.__LOCAL_DATA__ 初始化（.js 文件数据）
             if (typeof window.__LOCAL_DATA__ !== 'undefined' && window.__LOCAL_DATA__[key] !== undefined) {
@@ -1179,11 +1252,17 @@ class FileStorageManager {
     async removeItem(key) {
         if (this.fileApiReady) {
             try {
-                const reqInit = { method: 'DELETE' };
-                if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
-                    reqInit.headers = { 'X-Server-Token': window.__SERVER_TOKEN__ };
+                // C/S 模式: 走 ApiClient(自动携带 JWT, 401 自动跳登录)
+                if (this.csMode && typeof ApiClient !== 'undefined') {
+                    await ApiClient.request('DELETE', '/api/delete?key=' + encodeURIComponent(key));
+                } else {
+                    // Electron 旧内嵌服务兼容(X-Server-Token)
+                    const reqInit = { method: 'DELETE' };
+                    if (typeof window !== 'undefined' && window.__SERVER_TOKEN__) {
+                        reqInit.headers = { 'X-Server-Token': window.__SERVER_TOKEN__ };
+                    }
+                    await fetch(`/api/delete?key=${encodeURIComponent(key)}`, reqInit);
                 }
-                await fetch(`/api/delete?key=${encodeURIComponent(key)}`, reqInit);
             } catch(e) {}
         }
         
@@ -1358,6 +1437,8 @@ class FileStorageManager {
      */
     async createImportSnapshot() {
         if (!this.fileApiReady) return { ok: true, snapshotId: '' };
+        // C/S 模式: 批量导入走服务端 /api/assets/batch 单事务, 无需文件级快照
+        if (this.csMode) return { ok: true, snapshotId: '' };
         try {
             const resp = await fetch('/api/exec', {
                 method: 'POST',
@@ -1450,6 +1531,38 @@ const storageManager = new FileStorageManager();
  * 数据会保存到 IndexedDB + localStorage，如果已连接数据文件夹还会保存到 .js 文件
  */
 function saveToLocalStorage() {
+    // ============ C/S 多人模式 ============
+    // 资产已通过 REST 单资产 API(POST/PUT/DELETE /api/assets, 带乐观锁)实时写服务端,
+    // 本函数仅刷新本地读取缓存, 不再全量上传资产数组 —— 避免绕过乐观锁覆盖他人修改。
+    // 用户状态(当前页/筛选/视图)为各端私有, 同样只留本地。
+    if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+        try {
+            storageManager._saveToLocalStorage(STORAGE_KEYS.ASSET_MANAGEMENT_DATA, storageManager.compressData(assetsData));
+            const csUserState = {
+                currentPage: currentPage,
+                currentView: currentView,
+                currentZoom: currentZoom,
+                systemSettings: {
+                    systemName: document.getElementById('system-name') ? document.getElementById('system-name').value : '电脑资产管理系统',
+                    dateFormat: document.getElementById('date-format') ? document.getElementById('date-format').value : 'yyyy/mm/dd',
+                    recordsPerPage: recordsPerPage
+                },
+                filters: {
+                    statusFilter: document.getElementById('status-filter') ? document.getElementById('status-filter').value : 'all',
+                    ownerFilter: document.getElementById('owner-filter') ? document.getElementById('owner-filter').value : 'all',
+                    typeFilter: document.getElementById('type-filter') ? document.getElementById('type-filter').value : 'all',
+                    departmentFilter: document.getElementById('department-filter') ? document.getElementById('department-filter').value : 'all'
+                },
+                lastSaved: new Date().toISOString()
+            };
+            storageManager._saveToLocalStorage(STORAGE_KEYS.USER_STATE_DATA, csUserState);
+        } catch (e) {
+            console.warn('C/S 模式本地缓存写入失败:', e);
+        }
+        hasUnsavedChanges = false;
+        return;
+    }
+
     // 先同步保存到 localStorage（确保即使立即刷新也不丢数据）
     try {
         const syncData = storageManager.compressData(assetsData);
@@ -1704,6 +1817,11 @@ async function saveTemplateToLocalStorage(templateData, formatsData) {
 async function loadTemplateFromLocalStorage() {
     try {
         if (!window.XLSX) {
+            return;
+        }
+
+        // C/S 模式下未登录时跳过(模板属服务端数据, 未登录请求只会得到 401 报错)
+        if (typeof ApiClient !== 'undefined' && ApiClient.csMode && !ApiClient.isLoggedIn()) {
             return;
         }
 

@@ -1,0 +1,35 @@
+# 固定资产管理系统服务端 - systemd 单元 (Linux)
+#
+# 使用: 按实际部署路径修改 User/WorkingDirectory/ExecStart 后
+#   sudo cp asset-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now asset-server
+# 日志: journalctl -u asset-server -f
+#
+# ExecStart 二选一:
+#   方式 A(打包产物): /opt/asset-server/asset-server-linux
+#   方式 B(源码):     /usr/bin/node /opt/asset-server/server/src/index.js
+#     (此时 WorkingDirectory=/opt/asset-server/server)
+
+[Unit]
+Description=Asset Management Server (Koa + SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=asset
+WorkingDirectory=/opt/asset-server
+ExecStart=/opt/asset-server/asset-server-linux
+Restart=always
+RestartSec=3
+# 安全模型与 Windows 版一致: 服务端仅监听本机回环, 由 nginx 80/443 对外反代。
+# 若无 nginx 直连局域网, 改为 0.0.0.0 并自行放行 3456 端口。
+Environment=ASSET_HOST=127.0.0.1
+Environment=ASSET_PORT=3456
+# 数据目录(缺省为工作目录下 data/); 需与 WorkingDirectory 匹配或显式指定
+# Environment=ASSET_DATA_DIR=/var/lib/asset-server
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

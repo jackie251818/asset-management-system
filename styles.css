@@ -2382,4 +2382,84 @@ html[data-theme="tech"] ::-webkit-scrollbar-thumb {
 html[data-theme="tech"] ::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 229, 255, 0.5);
 }
-    
+
+/* ================================== C/S 多人模式:侧边栏用户区 ================================== */
+.cs-user-box {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 24px;
+    border-top: 1px solid var(--border-card);
+    background: transparent;
+}
+.cs-user-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text-color);
+    min-width: 0;
+}
+.cs-user-info i {
+    font-size: 20px;
+    color: var(--brand);
+    flex-shrink: 0;
+}
+.cs-user-name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cs-user-role {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-tag);
+    border-radius: 4px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+.cs-logout-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    transition: var(--transition-base);
+    width: 100%;
+}
+.cs-logout-btn:hover {
+    color: #ff4d4f;
+    border-color: #ff4d4f;
+    background: rgba(255, 77, 79, 0.06);
+}
+.cs-logout-btn i {
+    font-size: 14px;
+}
+.cs-changepwd-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    transition: var(--transition-base);
+    width: 100%;
+}
+.cs-changepwd-btn:hover {
+    color: #3081eb;
+    border-color: #3081eb;
+    background: rgba(48, 129, 235, 0.06);
+}
+.cs-changepwd-btn i {
+    font-size: 14px;
+}

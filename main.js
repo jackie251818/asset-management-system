@@ -2,14 +2,18 @@
  * Electron 主进程入口 - 固定资产管理系统便携式离线版
  *
  * 设计要点:
- * 1. 内嵌 HTTP 服务器(复用 simple_server.js 逻辑),自动选择可用端口
+ * 1. 双运行模式:
+ *    a) 单机模式(默认): 内嵌 HTTP 服务器(复用 simple_server.js 逻辑),自动选择可用端口
+ *    b) C/S 客户端模式: exe 旁存在 server.config.json 且 serverUrl 有效时,
+ *       窗口直接加载远程 C/S 服务端页面(数据/认证全部由服务端提供,本地不落任何数据)
  * 2. 静态资源从应用目录(asar 内)提供
  * 3. 数据目录支持便携式模式:数据保存在 exe 旁边的 data/ 目录,跟 exe 走
  * 4. 首次运行时,从 asar 内的初始 data 目录复制 .js 数据文件到便携式数据目录
  */
 
-const { app, BrowserWindow, Menu, shell } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -741,7 +745,8 @@ function startServer(publicDir, dataDir) {
                         portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR || '',
                         buildTime: buildInfo.buildTime ? String(buildInfo.buildTime) : '',
                         buildChannel: buildInfo.channel ? String(buildInfo.channel) : 'source',
-                        packageVersion
+                        packageVersion,
+                        embedded: true          // 标识为 Electron 单机内嵌服务(前端免密单机模式, 与远端 C/S cs:true 区分)
                     }));
                     return;
                 }
@@ -937,10 +942,618 @@ let mainWindow = null;
 // HTTP 服务器引用,退出时优雅关闭,避免最后的写入被截断
 let httpServer = null;
 
+/** 客户端模式失败兜底:本次启动强制单机(不改动任何已保存设置) */
+let forceStandaloneOnce = false;
+
 /**
- * 创建应用主窗口
+ * ============ C/S 客户端模式配置 ============
+ * 两种配置来源(优先级从高到低):
+ *   1) 应用内"连接服务器设置"(保存在用户数据目录 connection.json)——界面操作, 零手工文件;
+ *   2) exe 旁(或安装目录) server.config.json —— 管理员预配置, 保持向后兼容:
+ *          { "serverUrl": "http://192.168.1.100:3456" }
+ * 客户端模式:窗口直接加载服务端页面,本地不启动 HTTP 服务器、不读写任何数据目录;
+ * 单机模式:内嵌服务器 + 本地数据目录(原有行为)。
+ *
+ * resolveServerConfig() 返回:
+ *   { serverUrl, source }  客户端模式( source: 'app' | 'file' )
+ *   { invalid, source }    配置存在但无效
+ *   null                   单机模式
+ */
+
+function getExeDir() {
+    try {
+        return process.env.PORTABLE_EXECUTABLE_DIR
+            || (app.isPackaged ? path.dirname(app.getPath('exe')) : APP_DIR);
+    } catch (_) {
+        return APP_DIR;
+    }
+}
+
+function normalizeServerUrl(raw) {
+    const url = typeof raw === 'string' ? raw.trim().replace(/\/+$/, '') : '';
+    return /^https?:\/\/.+/i.test(url) ? url : '';
+}
+
+/** 读取 exe 旁 server.config.json(管理员预配置, 旧机制, 向后兼容) */
+function loadServerConfig() {
+    const configPath = path.join(getExeDir(), 'server.config.json');
+    if (!fs.existsSync(configPath)) return null;
+
+    try {
+        const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const url = normalizeServerUrl(cfg.serverUrl);
+        if (url) {
+            console.log(`[客户端模式] 检测到 server.config.json,连接服务端: ${url}`);
+            return { serverUrl: url, source: 'file' };
+        }
+        console.error(`[客户端模式] ${configPath} 中的 serverUrl 无效: "${url}"`);
+        return { invalid: true, source: 'file' };
+    } catch (e) {
+        console.error(`[客户端模式] 解析 ${configPath} 失败: ${e.message}`);
+        return { invalid: true, source: 'file' };
+    }
+}
+
+/** 应用内连接设置文件: { mode:'client'|'standalone', serverUrl, savedAt } */
+function userConnectionPath() {
+    return path.join(app.getPath('userData'), 'connection.json');
+}
+
+function readUserConnection() {
+    const p = userConnectionPath();
+    if (!fs.existsSync(p)) return null;
+    try {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    } catch (e) {
+        console.error(`[连接设置] 解析 ${p} 失败: ${e.message}`);
+        return { mode: 'invalid' };
+    }
+}
+
+function writeUserConnection(cfg) {
+    writeFileAtomic(userConnectionPath(), JSON.stringify(cfg, null, '    '), 'utf-8');
+}
+
+/** 汇总两种来源, 得出本次启动的运行模式(应用内设置优先于 exe 旁文件) */
+function resolveServerConfig() {
+    const userCfg = readUserConnection();
+    if (userCfg) {
+        if (userCfg.mode === 'client') {
+            const url = normalizeServerUrl(userCfg.serverUrl);
+            if (url) return { serverUrl: url, source: 'app' };
+            return { invalid: true, source: 'app' };
+        }
+        if (userCfg.mode === 'standalone') return null;
+        return { invalid: true, source: 'app' };
+    }
+    return loadServerConfig();
+}
+
+/** 主进程侧探测服务端可用性(GET /api/ping, 3.5s 超时; 兼容自签证书场景) */
+function probeServer(url, timeoutMs = 3500) {
+    return new Promise((resolve) => {
+        let target;
+        try {
+            target = new URL(url + '/api/ping');
+        } catch (_) {
+            resolve({ ok: false, message: '地址格式无效' });
+            return;
+        }
+        const mod = target.protocol === 'https:' ? https : http;
+        const req = mod.get(target, { timeout: timeoutMs, rejectUnauthorized: false }, (res) => {
+            let body = '';
+            res.setEncoding('utf-8');
+            res.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    resolve({ ok: false, message: `服务端响应异常: HTTP ${res.statusCode}` });
+                    return;
+                }
+                try {
+                    const data = JSON.parse(body);
+                    if (data && data.success === false) {
+                        resolve({ ok: false, message: '服务端返回失败: ' + (data.message || '未知原因') });
+                        return;
+                    }
+                } catch (_) { /* 非 JSON 响应但 HTTP 200, 亦视为可达 */ }
+                resolve({ ok: true, message: '连接成功' });
+            });
+        });
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, message: '连接超时(3.5 秒无响应)' }); });
+        req.on('error', (e) => resolve({ ok: false, message: '无法连接: ' + e.message }));
+    });
+}
+
+/**
+ * 应用菜单:仅一个"连接设置"入口。
+ * 菜单栏默认隐藏(Alt 键临时显示), 保证窗口整洁的同时保留应用内切换模式的入口。
+ */
+function buildAppMenu() {
+    return Menu.buildFromTemplate([
+        {
+            label: '设置',
+            submenu: [
+                {
+                    label: '连接服务器设置…',
+                    accelerator: 'CmdOrCtrl+Alt+S',
+                    click: () => { createConnectionWindow(); }
+                }
+            ]
+        }
+    ]);
+}
+
+let connectionWindow = null;
+
+/** 连接设置窗口(加载本地 connection.html, 不依赖服务端) */
+function createConnectionWindow() {
+    if (connectionWindow && !connectionWindow.isDestroyed()) {
+        connectionWindow.focus();
+        return;
+    }
+    const hasMain = mainWindow && !mainWindow.isDestroyed();
+    connectionWindow = new BrowserWindow({
+        width: 540,
+        height: 680,
+        resizable: true,
+        minimizable: false,
+        maximizable: true,
+        title: '连接服务器设置',
+        parent: hasMain ? mainWindow : null,
+        modal: hasMain,
+        webPreferences: {
+            preload: path.join(APP_DIR, 'connection-preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false
+        }
+    });
+    connectionWindow.setMenuBarVisibility(false);
+    connectionWindow.on('closed', () => { connectionWindow = null; });
+    connectionWindow.loadFile(path.join(APP_DIR, 'connection.html'));
+}
+
+/** 连接设置 IPC:读取/测试/保存/清除/应用重启 */
+function registerConnectionIpc() {
+    ipcMain.handle('conn:get', () => {
+        const userCfg = readUserConnection();
+        return {
+            mode: userCfg ? (userCfg.mode === 'client' ? 'client' : (userCfg.mode === 'standalone' ? 'standalone' : 'invalid')) : null,
+            serverUrl: userCfg && userCfg.serverUrl ? String(userCfg.serverUrl) : '',
+            appSettingExists: !!userCfg,
+            fileConfigExists: fs.existsSync(path.join(getExeDir(), 'server.config.json'))
+        };
+    });
+
+    ipcMain.handle('conn:test', (_e, rawUrl) => {
+        const url = normalizeServerUrl(rawUrl);
+        if (!url) return { ok: false, message: '地址格式无效, 应为 http://服务器IP:端口' };
+        return probeServer(url);
+    });
+
+    ipcMain.handle('conn:save', (_e, cfg) => {
+        const mode = cfg && cfg.mode === 'client' ? 'client' : 'standalone';
+        if (mode === 'client') {
+            const url = normalizeServerUrl(cfg && cfg.serverUrl);
+            if (!url) return { ok: false, message: '地址格式无效, 应为 http://服务器IP:端口' };
+            writeUserConnection({ mode, serverUrl: url, savedAt: new Date().toISOString() });
+            console.log(`[连接设置] 已保存: 客户端模式 ${url}`);
+        } else {
+            writeUserConnection({ mode, savedAt: new Date().toISOString() });
+            console.log('[连接设置] 已保存: 单机模式');
+        }
+        return { ok: true, file: userConnectionPath() };
+    });
+
+    ipcMain.handle('conn:clear', () => {
+        try { fs.unlinkSync(userConnectionPath()); } catch (_) { /* 文件不存在 */ }
+        console.log('[连接设置] 已清除应用内设置(恢复按 exe 旁 server.config.json / 默认单机)');
+        return { ok: true };
+    });
+
+    ipcMain.handle('conn:apply', () => {
+        // 保存后重启应用使新模式生效; quit 会触发 before-quit 优雅关闭内嵌服务器
+        app.relaunch();
+        app.quit();
+        return { ok: true };
+    });
+
+    // ============ 服务端信息 + 数据同步 ============
+
+    /** HTTP 请求工具(返回 { status, data, text, error }) */
+    async function httpJson(method, url, opts) {
+        opts = opts || {};
+        let target;
+        try { target = new URL(url); } catch (e) { return { error: '地址格式无效: ' + e.message }; }
+        const mod = target.protocol === 'https:' ? https : http;
+        const headers = { 'User-Agent': 'AssetManager-Desktop/1.0' };
+        if (opts.auth) headers['Authorization'] = 'Bearer ' + opts.auth;
+        if (opts.body) { headers['Content-Type'] = 'application/json; charset=utf-8'; }
+        return new Promise((resolve) => {
+            const req = mod.request({
+                method,
+                hostname: target.hostname, port: target.port || (target.protocol === 'https:' ? 443 : 80),
+                path: target.pathname + target.search, headers,
+                timeout: opts.timeoutMs || 8000, rejectUnauthorized: false
+            }, (res) => {
+                let body = '';
+                res.setEncoding('utf-8');
+                res.on('data', (c) => { body += c; if (body.length > 5 * 1024 * 1024) req.destroy(); });
+                res.on('end', () => {
+                    let data = null;
+                    try { data = JSON.parse(body); } catch (_) { /* 不是 JSON */ }
+                    resolve({ status: res.statusCode, data, text: body });
+                });
+            });
+            req.on('error', (e) => resolve({ error: e.message || String(e) }));
+            req.on('timeout', () => { req.destroy(); resolve({ error: '请求超时' }); });
+            if (opts.body) req.write(opts.body);
+            req.end();
+        });
+    }
+
+    /** 同步的 7 个数据键(资产全量 + 6 个自定义选项, 排除 userStateData 等个人状态) */
+    const SYNC_KEYS = [
+        'assetManagementData',
+        'custom_options_owner', 'custom_options_owner_deleted',
+        'custom_options_type', 'custom_options_type_deleted',
+        'custom_options_department', 'custom_options_department_deleted',
+    ];
+
+    /** 服务端信息(免鉴权 /api/info) */
+    ipcMain.handle('conn:serverInfo', async (_e, rawUrl) => {
+        const url = normalizeServerUrl(rawUrl);
+        if (!url) return { ok: false, message: '服务器地址无效' };
+        const res = await httpJson('GET', url + '/api/info');
+        if (res.error) return { ok: false, message: '连接失败: ' + res.error };
+        if (res.status !== 200 || !res.data || !res.data.success) {
+            return { ok: false, message: (res.data && (res.data.message || res.data.error)) || ('HTTP ' + res.status) };
+        }
+        const info = res.data;
+        return { ok: true, info: {
+            name: info.name || '-', version: info.version || '-',
+            dbPath: info.dbPath || '-', serverTime: info.serverTime || '-',
+            cs: !!info.cs
+        } };
+    });
+
+    /** 辅助: 登录服务端拿 JWT */
+    async function loginServer(baseUrl, username, password) {
+        if (!baseUrl || !username || !password) return { error: '请填写服务器地址、用户名和密码' };
+        const body = JSON.stringify({ username: String(username).trim(), password: String(password) });
+        const res = await httpJson('POST', baseUrl + '/api/auth/login', { body });
+        if (res.error) return { error: '连接失败: ' + res.error };
+        if (res.status !== 200 || !res.data || res.data.code !== 0 || !res.data.data || !res.data.data.token) {
+            const msg = (res.data && (res.data.message || res.data.error)) || ('登录失败 (HTTP ' + res.status + ')');
+            return { error: msg };
+        }
+        return { token: res.data.data.token };
+    }
+
+    /** 写入本地 .json + .js 双文件(与内嵌服务器 /api/save 逻辑一致) */
+    function writeLocalDataKey(dataDir, key, value) {
+        const jsonPath = path.join(dataDir, key + '.json');
+        const jsPath = path.join(dataDir, key + '.js');
+        const jsonStr = JSON.stringify(value, null, 2);
+        const jsContent = `// ${key} 数据文件(本地模式)\n` +
+            `// 此文件由系统自动维护,请勿手动编辑\n` +
+            `// 最后更新: ${new Date().toISOString()}\n` +
+            `window.__LOCAL_DATA__ = window.__LOCAL_DATA__ || {};\n` +
+            `window.__LOCAL_DATA__.${key} = ${jsonStr};\n`;
+        fs.writeFileSync(jsonPath, jsonStr, 'utf-8');
+        fs.writeFileSync(jsPath, jsContent, 'utf-8');
+    }
+
+    /** 读取本地 .json 文件(.js 只是 JSONP 包装, 直接读 .json) */
+    function readLocalDataKey(dataDir, key) {
+        const jsonPath = path.join(dataDir, key + '.json');
+        if (fs.existsSync(jsonPath)) {
+            try { return JSON.parse(fs.readFileSync(jsonPath, 'utf-8')); }
+            catch (e) { console.warn('[sync] 读取本地 ' + key + '.json 失败:', e.message); }
+        }
+        // 退回到 .js 文件解析
+        const jsPath = path.join(dataDir, key + '.js');
+        if (fs.existsSync(jsPath)) {
+            try {
+                const js = fs.readFileSync(jsPath, 'utf-8');
+                const m = js.match(/window\.__LOCAL_DATA__\.[A-Za-z0-9_]+\s*=\s*([\s\S]*?);?\s*$/);
+                if (m) return JSON.parse(m[1]);
+            } catch (e) { console.warn('[sync] 读取本地 ' + key + '.js 失败:', e.message); }
+        }
+        return null;
+    }
+
+    /** 服务端 → 本地同步 */
+    ipcMain.handle('conn:syncPull', async (_e, payload) => {
+        const url = normalizeServerUrl(payload && payload.url);
+        if (!url) return { ok: false, message: '服务器地址无效' };
+        const login = await loginServer(url, payload && payload.username, payload && payload.password);
+        if (login.error) return { ok: false, message: login.error };
+        const token = login.token;
+        const dataDir = getPortableDataDir();
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+        const pulled = {};
+        const errors = [];
+        let totalAssets = 0;
+        for (const key of SYNC_KEYS) {
+            const res = await httpJson('GET', url + '/api/load?key=' + encodeURIComponent(key), { auth: token });
+            if (res.error) { errors.push(key + ': ' + res.error); continue; }
+            if (res.status !== 200 || !res.data || !res.data.success) {
+                errors.push(key + ': ' + ((res.data && (res.data.message || res.data.error)) || ('HTTP ' + res.status)));
+                continue;
+            }
+            const value = res.data.data;
+            pulled[key] = Array.isArray(value) ? value.length : 1;
+            if (key === 'assetManagementData' && Array.isArray(value)) totalAssets = value.length;
+            writeLocalDataKey(dataDir, key, value);
+            console.log('[sync] pull ' + key + ': ' + pulled[key] + ' 条');
+        }
+
+        // 顺带拿服务端信息显示
+        const infoRes = await httpJson('GET', url + '/api/info');
+        const serverInfo = (infoRes.data && infoRes.data.success) ? infoRes.data : {};
+
+        const ok = errors.length === 0;
+        return { ok, pulled, errors, totalAssets, serverInfo: { name: serverInfo.name, version: serverInfo.version } };
+    });
+
+    /** 本地 → 服务端同步(全量替换) */
+    ipcMain.handle('conn:syncPush', async (_e, payload) => {
+        const url = normalizeServerUrl(payload && payload.url);
+        if (!url) return { ok: false, message: '服务器地址无效' };
+        const login = await loginServer(url, payload && payload.username, payload && payload.password);
+        if (login.error) return { ok: false, message: login.error };
+        const token = login.token;
+        const dataDir = getPortableDataDir();
+
+        const pushed = {};
+        const errors = [];
+        let totalAssets = 0;
+        for (const key of SYNC_KEYS) {
+            const value = readLocalDataKey(dataDir, key);
+            if (value === null || value === undefined) {
+                console.log('[sync] push 跳过 ' + key + ': 本地无数据');
+                continue;
+            }
+            const body = JSON.stringify({ key, value });
+            const res = await httpJson('POST', url + '/api/save?key=' + encodeURIComponent(key), { auth: token, body });
+            if (res.error) { errors.push(key + ': ' + res.error); continue; }
+            if (res.status !== 200 || !res.data || !res.data.success) {
+                errors.push(key + ': ' + ((res.data && (res.data.message || res.data.error)) || ('HTTP ' + res.status)));
+                continue;
+            }
+            pushed[key] = res.data.count || (Array.isArray(value) ? value.length : 1);
+            if (key === 'assetManagementData' && Array.isArray(value)) totalAssets = value.length;
+            console.log('[sync] push ' + key + ': ' + pushed[key] + ' 条');
+        }
+
+        const infoRes = await httpJson('GET', url + '/api/info');
+        const serverInfo = (infoRes.data && infoRes.data.success) ? infoRes.data : {};
+
+        const ok = errors.length === 0;
+        return { ok, pushed, errors, totalAssets, serverInfo: { name: serverInfo.name, version: serverInfo.version } };
+    });
+}
+
+/**
+ * 客户端模式连接失败页(内联,主进程 data: URL 渲染): 重新连接 / 修改设置 / 改用单机
+ * 额外场景: 远程 API 正常但前端静态文件缺失(源码部署漏传前端)
+ */
+function clientErrorPageHtml(serverUrl, reason, hint) {
+    const msg = JSON.stringify(String(reason || '无法连接服务器'));
+    const hintHtml = hint ? '<p style="margin-top:8px;font-size:12px;color:#b45309;background:#fef3c7;padding:8px 12px;border-radius:6px;text-align:left">' + String(hint).replace(/[<>&"]/g, '') + '</p>' : '';
+    return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>连接失败 - 固定资产管理系统</title>'
+        + '<style>body{font-family:"Microsoft YaHei",sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}'
+        + '.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:40px 48px;max-width:560px;box-shadow:0 8px 24px rgba(0,0,0,.06);text-align:center}'
+        + 'h1{font-size:20px;color:#1f2937;margin:0 0 12px}p{color:#6b7280;font-size:14px;line-height:1.8;margin:6px 0}'
+        + 'code{background:#f3f4f6;padding:2px 8px;border-radius:4px;font-size:13px;word-break:break-all}'
+        + '.row{margin-top:20px;display:flex;gap:12px;justify-content:center}'
+        + 'button{padding:10px 20px;border-radius:8px;font-size:14px;cursor:pointer;border:1px solid #d1d5db;background:#fff;color:#374151}'
+        + 'button.primary{background:#3081eb;border-color:#3081eb;color:#fff}'
+        + '</style></head><body><div class="card"><h1>无法连接服务器</h1>'
+        + '<p>' + msg + '</p>'
+        + '<p>服务端地址: <code>' + String(serverUrl).replace(/[<>&"]/g, '') + '</code></p>'
+        + hintHtml
+        + '<div class="row">'
+        + '<button class="primary" id="retry">重新连接</button>'
+        + '<button id="settings">修改连接设置</button>'
+        + '<button id="standalone">改用单机模式</button>'
+        + '</div>'
+        + '<p style="margin-top:16px;font-size:12px;color:#9ca3af">也可以在应用内按 Alt 键显示菜单,选择"连接服务器设置"</p>'
+        + '</div>'
+        + '<script>'
+        + 'document.getElementById("retry").addEventListener("click",function(){location.href="cs-retry://go";});'
+        + 'document.getElementById("settings").addEventListener("click",function(){location.href="cs-settings://go";});'
+        + 'document.getElementById("standalone").addEventListener("click",function(){location.href="cs-standalone://go";});'
+        + '</script></body></html>';
+}
+
+/** 客户端模式预检: 检测远程 API 是否在线 + 前端静态文件是否部署完整 */
+function probeClientServer(serverUrl) {
+    return new Promise((resolve) => {
+        let target;
+        try { target = new URL(serverUrl); } catch (_) { resolve({ ok: false, apiOk: false, staticOk: false, error: '服务器地址格式无效' }); return; }
+        const mod = target.protocol === 'https:' ? https : http;
+        const probe = (path) => new Promise((r) => {
+            const req = mod.request({ hostname: target.hostname, port: target.port || 80, path, method: 'GET', timeout: 5000 }, (res) => {
+                // 消耗响应体以免触发 socket hang up
+                res.resume();
+                res.on('end', () => r(res.statusCode || 0));
+            });
+            req.on('error', () => r(0));
+            req.on('timeout', () => { req.destroy(); r(0); });
+            req.end();
+        });
+        Promise.all([probe('/api/info'), probe('/login.html')]).then(([apiCode, staticCode]) => {
+            const apiOk = apiCode === 200;
+            // 静态文件 200/302 算 OK, 4xx 算缺失
+            const staticOk = staticCode >= 200 && staticCode < 400;
+            let ok = apiOk && staticOk;
+            let error = '';
+            let hint = '';
+            if (!apiOk && !staticOk) {
+                error = '网络连接失败 (DNS/防火墙/服务端未启动)';
+            } else if (!apiOk) {
+                error = '服务端 API 无响应 (HTTP ' + apiCode + ')';
+            } else if (!staticOk) {
+                // API 正常但静态文件 404 —— 前端未部署
+                error = '远程 API 正常，但前端页面返回 HTTP ' + staticCode;
+                hint = '常见原因: 服务端源码部署时只上传了 server/ 目录, 前端文件(index.html、login.html、js/、libs/、styles.css)未部署到 ' + target + ' 的上一级目录。\n临时修复: 将项目根目录的 index.html / login.html / styles.css / final_chart_fix.js / js/ / libs/ / asset_label_print.html 上传到服务器的项目根目录(与 server/ 平级)。\n长期方案: 用 pkg 打包成 asset-server.exe, 前端文件会自动内嵌。';
+            }
+            resolve({ ok, apiOk, staticOk, error, hint });
+        });
+    });
+}
+
+/**
+ * C/S 客户端模式:直接加载远程服务端页面。
+ * 前端与 API 同源(登录守卫/JWT 均由服务端页面处理),本地零数据落盘。
+ */
+async function createClientWindow(serverConfig) {
+    const serverUrl = serverConfig.serverUrl;
+
+    mainWindow = new BrowserWindow({
+        width: 1400,
+        height: 900,
+        minWidth: 1024,
+        minHeight: 680,
+        title: '固定资产管理系统 - 正在连接服务端...',
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            preload: path.join(APP_DIR, 'connection-preload.js')
+        }
+    });
+
+    Menu.setApplicationMenu(buildAppMenu());
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.on('page-title-updated', (event, title) => {
+        event.preventDefault();
+        if (mainWindow && title) {
+            mainWindow.setTitle(title);
+        }
+    });
+
+    // 外部链接在系统默认浏览器中打开
+    mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+        if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
+            shell.openExternal(targetUrl);
+        }
+        return { action: 'deny' };
+    });
+
+    // 连接失败(非主动打断)→ 渲染内联错误页;错误页按钮 → will-navigate 拦截分发
+    let currentUrl = serverUrl + '/login.html';
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDesc, validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3) return; // -3 = ERR_ABORTED(导航被打断,非故障)
+        console.error(`[客户端模式] 加载失败: ${validatedURL} (${errorCode} ${errorDesc})`);
+        currentUrl = serverUrl + '/login.html';
+        mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(clientErrorPageHtml(serverUrl, `错误码 ${errorCode}: ${errorDesc}`)));
+    });
+    // HTTP 4xx/5xx 不算 did-fail-load,用 session.webRequest 拦截(Electron ≥23 已废弃 webContents.webRequest)
+    try {
+        const ses = mainWindow.webContents.session;
+        ses.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, callback) => {
+            if (details.resourceType === 'mainFrame' && details.statusCode >= 400 && details.statusCode < 600) {
+                const code = details.statusCode;
+                console.warn(`[客户端模式] 主框架收到 HTTP ${code}, 拦截并显示友好错误页`);
+                const reason = (code === 404)
+                    ? '远程页面返回 404 - 文件不存在'
+                    : `远程服务器返回 HTTP ${code}`;
+                setImmediate(() => {
+                    mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(clientErrorPageHtml(serverUrl, reason))).catch(() => {});
+                });
+                callback({ cancel: true });
+                return;
+            }
+            callback({});
+        });
+    } catch (e) {
+        console.warn('[客户端模式] session.webRequest 拦截注册失败:', e.message);
+    }
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (url.startsWith('cs-retry://')) {
+            event.preventDefault();
+            console.log('[客户端模式] 用户请求重新连接...');
+            mainWindow.loadURL(currentUrl).catch(() => {});
+        } else if (url.startsWith('cs-settings://')) {
+            event.preventDefault();
+            console.log('[客户端模式] 打开连接设置...');
+            createConnectionWindow();
+        } else if (url.startsWith('cs-standalone://')) {
+            event.preventDefault();
+            console.log('[客户端模式] 用户选择改用单机模式(本次启动生效, 不改动已保存设置)...');
+            forceStandaloneOnce = true;
+            const win = mainWindow;
+            mainWindow = null;
+            if (win && !win.isDestroyed()) win.destroy();
+            startStandaloneMode();
+        }
+    });
+
+    // 预检远程服务端状态: 先探测再 loadURL, 避免裸显示远程 404 页面
+    const probe = await probeClientServer(serverUrl);
+    if (!probe.ok) {
+        console.warn(`[客户端模式] 预检失败: apiOk=${probe.apiOk} staticOk=${probe.staticOk} error=${probe.error}`);
+        const errorPage = clientErrorPageHtml(serverUrl, probe.error, probe.hint);
+        await mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(errorPage));
+        return;
+    }
+
+    try {
+        await mainWindow.loadURL(currentUrl);
+    } catch (_) { /* 失败由 did-fail-load / session.webRequest 统一处理 */ }
+    return;
+}
+
+/**
+ * 应用主窗口入口:解析连接配置, 决定客户端模式 / 单机模式
  */
 async function createWindow() {
+    // 客户端模式检测(应用内设置优先, 其次 exe 旁 server.config.json)
+    const serverConfig = forceStandaloneOnce ? null : resolveServerConfig();
+    forceStandaloneOnce = false;
+
+    if (serverConfig && serverConfig.serverUrl) {
+        await createClientWindow(serverConfig);
+        return;
+    }
+
+    // 配置存在但无效 → 弹窗三选, 不再静默回落单机
+    if (serverConfig && serverConfig.invalid) {
+        const detail = serverConfig.source === 'app'
+            ? '应用内保存的连接设置损坏。可重新保存设置, 或清除设置后按 exe 旁 server.config.json / 默认单机启动。'
+            : 'exe 旁 server.config.json 格式无效。请修正该文件, 或在连接设置界面改用应用内设置。';
+        const r = await dialog.showMessageBox({
+            type: 'warning',
+            title: '连接配置无效',
+            message: '连接配置无效',
+            detail,
+            buttons: ['修改连接设置', '改用单机模式', '退出'],
+            defaultId: 0,
+            cancelId: 2,
+            noLink: true
+        });
+        if (r.response === 0) {
+            createConnectionWindow();
+            return;
+        }
+        if (r.response === 2) {
+            app.quit();
+            return;
+        }
+        // r.response === 1 → 改用单机(本次启动生效)
+    }
+
+    await startStandaloneMode();
+}
+
+/**
+ * 单机模式:内嵌 HTTP 服务器 + 本地数据目录(原有行为)
+ */
+async function startStandaloneMode() {
     // 确定数据目录并初始化
     const dataDir = getPortableDataDir();
     console.log(`[应用] 数据目录: ${dataDir}`);
@@ -975,16 +1588,27 @@ async function createWindow() {
         webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: true
+            sandbox: false,
+            preload: path.join(APP_DIR, 'connection-preload.js')
         }
     });
 
-    // 加载应用首页(通过内嵌 HTTP 服务器)
-    await mainWindow.loadURL(`http://127.0.0.1:${port}/index.html`);
+    // 加载登录页(统一入口): login.html 探测到 embedded=true 后免密跳转 index.html
+    await mainWindow.loadURL(`http://127.0.0.1:${port}/login.html`);
 
-    // 隐藏菜单栏(Windows 下按 Alt 仍可显示)
-    Menu.setApplicationMenu(null);
+    // 菜单栏默认隐藏(Windows 下按 Alt 仍可显示):提供"连接服务器设置"入口
+    Menu.setApplicationMenu(buildAppMenu());
     mainWindow.setMenuBarVisibility(false);
+
+    // 内嵌单机模式同样拦截 URL 协议:
+    // cs-settings:// → 打开连接设置窗口(用户填服务器地址后重启为 C/S 客户端模式)
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (url.startsWith('cs-settings://')) {
+            event.preventDefault();
+            console.log('[内嵌单机] 用户请求打开连接设置...');
+            createConnectionWindow();
+        }
+    });
 
     // 页面标题更新时，显式同步到 Electron 窗口标题（确保窗口标题栏跟随系统名称变化）
     mainWindow.on('page-title-updated', (event, title) => {
@@ -1014,6 +1638,7 @@ async function createWindow() {
 
 // Electron 准备就绪后创建窗口
 app.whenReady().then(() => {
+    registerConnectionIpc();
     createWindow();
 
     app.on('activate', () => {

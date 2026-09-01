@@ -160,7 +160,33 @@ function handleExcelImport(e) {
             if (validationErrors.length > 0) {
                 throw new Error(`数据验证失败：\n${validationErrors.slice(0, 5).join('\n')}${validationErrors.length > 5 ? '\n...等更多错误' : ''}`);
             }
-            
+
+            // ============ C/S 多人模式: 服务端单事务批量导入(全部成功或全部回滚) ============
+            if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+                try {
+                    const result = await ApiClient.batchImport(mappedData, 'merge');
+                    ApiClient.markLocalChange();
+                    // 以服务端为权威源, 重新拉取全量数据刷新内存与缓存
+                    await ApiClient.reloadAssetsData();
+                    updateStatistics();
+                    renderRecentAssets();
+                    renderDamagedAssets();
+                    renderAllAssets();
+                    saveToLocalStorage();   // C/S 模式下仅刷新本地缓存
+                    showNotification(`成功导入 ${result.inserted} 条新资产，更新 ${result.updated} 条现有资产（服务端事务）`, 'success', 4000);
+                } catch (err) {
+                    Logger.error('Import', 'C/S 批量导入失败:', err);
+                    if (err && err.code === 40300) {
+                        showNotification('导入失败：当前账号没有导入数据的权限', 'error', 6000);
+                    } else {
+                        showNotification('导入失败（服务端已整体回滚，未产生任何变更）: ' + ((err && err.message) || err), 'error', 8000);
+                    }
+                } finally {
+                    hideLoadingIndicator();
+                }
+                return;
+            }
+
             // 分批导入（大数据优化）
             const BATCH_SIZE = 100; // 每批处理100条数据
             // 创建一个临时的DOM元素显示进度
@@ -356,7 +382,38 @@ function handleJsonImport(e) {
                     throw new Error(`第${index + 1}条数据的数量必须为正整数`);
                 }
             });
-            
+
+            // ============ C/S 多人模式: 服务端单事务批量导入(按编号 upsert) ============
+            if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+                // 编号为空的自动生成
+                assetsToImport.forEach((item, idx) => {
+                    if (!item.id || String(item.id).trim() === '') {
+                        item.id = `AUTO-${Date.now()}-${idx}`;
+                    }
+                });
+                try {
+                    const result = await ApiClient.batchImport(assetsToImport, 'merge');
+                    ApiClient.markLocalChange();
+                    await ApiClient.reloadAssetsData();   // 以服务端为权威源刷新内存
+                    updateStatistics();
+                    renderRecentAssets();
+                    renderDamagedAssets();
+                    renderAllAssets();
+                    saveToLocalStorage();   // C/S 模式下仅刷新本地缓存
+                    showNotification(`成功导入 ${result.inserted} 条新资产，更新 ${result.updated} 条现有资产（服务端事务）\n${importSourceInfo}`, 'success', 5000);
+                } catch (err) {
+                    Logger.error('Import', 'C/S 批量导入失败:', err);
+                    if (err && err.code === 40300) {
+                        showNotification('导入失败：当前账号没有导入数据的权限', 'error', 6000);
+                    } else {
+                        showNotification('导入失败（服务端已整体回滚，未产生任何变更）: ' + ((err && err.message) || err), 'error', 8000);
+                    }
+                } finally {
+                    hideLoadingIndicator();
+                }
+                return;
+            }
+
             // 合并数据（去重）
             let addedCount = 0;
             let updatedCount = 0;
@@ -399,9 +456,25 @@ function handleJsonImport(e) {
 }
 
 // 导出到Excel - 优化版本
-function exportToExcel(exportType = 'assets') {
+async function exportToExcel(exportType = 'assets') {
     Logger.info('Import', 'Excel 导出触发 | 类型:', exportType, '| 资产数:', assetsData.length);
+
+    // C/S 多人模式: 以服务端全量数据为权威导出源(顺带刷新内存与本地缓存)
+    if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+        try {
+            showLoadingIndicator();
+            assetsData = await ApiClient.allAssets();
+            ApiClient._stamp = null;    // 重建指纹基线, 避免拉取后误报
+            saveToLocalStorage();
+        } catch (err) {
+            hideLoadingIndicator();
+            showNotification('获取服务端数据失败，导出已取消: ' + ((err && err.message) || err), 'error', 6000);
+            return;
+        }
+    }
+
     if (assetsData.length === 0) {
+        hideLoadingIndicator();
         showNotification('没有可导出的资产数据', 'warning');
         return;
     }
@@ -840,9 +913,25 @@ function downloadExcelTemplate() {
 }
 
 // 导出到JSON
-function exportToJson(exportType = 'assets') {
+async function exportToJson(exportType = 'assets') {
     Logger.info('Import', 'JSON 导出触发 | 类型:', exportType, '| 资产数:', assetsData.length);
+
+    // C/S 多人模式: 以服务端全量数据为权威导出源(顺带刷新内存与本地缓存)
+    if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+        try {
+            showLoadingIndicator();
+            assetsData = await ApiClient.allAssets();
+            ApiClient._stamp = null;    // 重建指纹基线, 避免拉取后误报
+            saveToLocalStorage();
+        } catch (err) {
+            hideLoadingIndicator();
+            showNotification('获取服务端数据失败，导出已取消: ' + ((err && err.message) || err), 'error', 6000);
+            return;
+        }
+    }
+
     if (assetsData.length === 0) {
+        hideLoadingIndicator();
         showNotification('没有可导出的资产数据', 'warning');
         return;
     }

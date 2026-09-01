@@ -82,6 +82,27 @@ function findArtifacts(outDir) {
 }
 
 function main() {
+    // ---- Windows 非管理员自动提权: rcedit 修改 PE 版本资源需要管理员权限 ----
+    if (process.platform === 'win32') {
+        try {
+            const { execSync } = require('child_process');
+            execSync('net session 2>&1', { stdio: 'ignore' });
+        } catch (_e) {
+            // 非管理员 → 用 PowerShell 以 runas 重启本脚本，保留全部 argv
+            const { spawnSync } = require('child_process');
+            // process.argv = [node.exe, script.js, ...userArgs]  — 把 script.js + userArgs 拼到一起
+            const argList = process.argv.slice(1).map(a =>
+                "'" + String(a).replace(/'/g, "''") + "'"
+            ).join(', ');
+            const psCmd = 'Start-Process -FilePath node -ArgumentList ' + argList
+                + ' -Verb RunAs -Wait';
+            const psArgs = ['-NoProfile', '-NonInteractive', '-Command', psCmd];
+            console.log('[elevate] 当前会话非管理员，自动提权后重新执行构建...');
+            spawnSync('powershell.exe', psArgs, { stdio: 'inherit' });
+            process.exit(0);
+        }
+    }
+
     const args = parseArgs(process.argv.slice(2));
     const pkg = readJson(PKG_PATH);
     const version = (pkg && pkg.version) ? String(pkg.version) : '0.0.0';

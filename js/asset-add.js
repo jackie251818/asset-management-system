@@ -434,7 +434,7 @@ function handleAddAsset(e) {
 }
 
 // 保存资产信息
-function saveAsset(attachments) {
+async function saveAsset(attachments) {
     // 获取表单数据
     const newAsset = {
         id: document.getElementById('asset-code').value.trim(),
@@ -454,14 +454,14 @@ function saveAsset(attachments) {
         depreciationYears: parseInt(document.getElementById('depreciation-years')?.value) || 0,
         purchaseNo: document.getElementById('purchase-no')?.value.trim() || '',
         paymentNo: document.getElementById('payment-no')?.value.trim() || '',
-        damageReason: document.getElementById('status').value === 'damaged' 
-            ? document.getElementById('damage-reason').value.trim() 
+        damageReason: document.getElementById('status').value === 'damaged'
+            ? document.getElementById('damage-reason').value.trim()
             : null,
         maintenanceRecords: [],
         attachments: attachments
     };
 
-    
+
     if (!newAsset.id || !newAsset.owner || !newAsset.type || !newAsset.brandModel || !newAsset.purchaseDate || !newAsset.department) {
         const missing = [];
         if (!newAsset.id) missing.push('资产编号');
@@ -475,16 +475,56 @@ function saveAsset(attachments) {
         return;
     }
 
-    
+
+    // ============ C/S 多人模式: REST 直连(服务端校验编号唯一, 返回带 version 的权威文档) ============
+    if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+        if (assetsData.some(asset => asset.id === newAsset.id)) {
+            Logger.warn('AssetAdd', '资产编号已存在(本地缓存比对):', newAsset.id);
+            alert('资产编号已存在: ' + newAsset.id);
+            return;
+        }
+        try {
+            const doc = await ApiClient.createAsset(newAsset);
+            assetsData.unshift(doc);
+            ApiClient.markLocalChange();
+            Logger.info('AssetAdd', '资产已通过服务端创建，当前总数:', assetsData.length);
+            updateStatistics();
+            renderRecentAssets();
+            renderDamagedAssets();
+            renderAllAssets();
+            saveToLocalStorage();   // C/S 模式下仅刷新本地缓存
+
+            document.getElementById('add-asset-form').reset();
+            resetFormCustomSelects();
+            document.getElementById('file-previews').innerHTML = '';
+            document.getElementById('file-upload').value = '';
+            document.getElementById('damage-reason-group').style.display = 'none';
+            alert('资产添加成功！');
+            switchPage('assets');
+        } catch (err) {
+            Logger.error('AssetAdd', '服务端创建资产失败:', err);
+            const msg = (err && err.message) || '未知错误';
+            if (err && err.code === 40900) {
+                alert('添加失败：资产编号已存在(' + newAsset.id + ')，或与其他数据冲突');
+            } else if (err && err.code === 40300) {
+                alert('添加失败：当前账号没有新增资产的权限');
+            } else {
+                alert('资产添加失败：' + msg);
+            }
+        }
+        return;
+    }
+
+    // ============ 本地模式 / Electron 旧服务模式: 原有全量保存逻辑 ============
     if (assetsData.some(asset => asset.id === newAsset.id)) {
         Logger.warn('AssetAdd', '资产编号已存在:', newAsset.id);
         return;
     }
 
-    
+
     assetsData.unshift(newAsset);
     Logger.info('AssetAdd', '资产已添加，当前总数:', assetsData.length);
-    
+
     updateStatistics();
     renderRecentAssets();
     renderDamagedAssets();
@@ -493,14 +533,14 @@ function saveAsset(attachments) {
     hasUnsavedChanges = true;
     saveToLocalStorage();
 
-    
+
     document.getElementById('add-asset-form').reset();
     resetFormCustomSelects();
     document.getElementById('file-previews').innerHTML = '';
     document.getElementById('file-upload').value = '';
     document.getElementById('damage-reason-group').style.display = 'none';
     alert('资产添加成功！');
-    
+
     // 切换到资产列表页
     switchPage('assets');
 }

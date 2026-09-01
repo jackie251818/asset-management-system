@@ -2,9 +2,46 @@
  * 系统初始化（DOMContentLoaded、浏览器兼容性、定期存储检查、页面卸载处理、模板加载）
  * 从 script.js 拆分而来 - 请勿手动修改行号映射
  */
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    // ============ 登录入口守卫(统一) ============
+    // 优先级: embedded(Electron 单机内嵌, 免密放行) > csMode(远端 C/S, 要求登录)
+    //         > app_mode(浏览器模式记忆) > 无选择 → 跳 login.html
+    try {
+        if (typeof ApiClient !== 'undefined') {
+            await ApiClient.ready();
+            // Electron 单机内嵌服务: 免密放行(避免与 login.html 来回跳死循环)
+            if (ApiClient.embeddedMode) {
+                /* 放行, 继续初始化 */
+            } else if (ApiClient.csMode) {
+                // C/S 模式: 必须已登录
+                if (!ApiClient.isLoggedIn()) { window.location.replace('login.html'); return; }
+            } else {
+                // 非嵌入式本地/文件模式: 检查浏览器模式记忆
+                let appMode = '';
+                try { appMode = localStorage.getItem('app_mode') || ''; } catch (e) {}
+                if (appMode === 'client') {
+                    // 用户选过 C/S 但当前探测不到服务端 → 回登录页重选
+                    if (!ApiClient.isLoggedIn()) { window.location.replace('login.html'); return; }
+                } else if (appMode !== 'standalone') {
+                    // 未选择模式 → 登录页选模式(单机版/C/S 版)
+                    window.location.replace('login.html'); return;
+                }
+                // appMode === 'standalone' → 放行(免密)
+            }
+        }
+    } catch (e) { /* 探测失败视为本地模式, 继续初始化 */ }
+
     try {
         Logger.info('Init', '系统初始化开始');
+
+        // ============ C/S 多人模式 UI 集成 ============
+        if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+            setupCSModeUI();
+        }
+
+        // ============ 切换运行模式入口(全局可见, 不区分单机/C/S) ============
+        setupSwitchModeUI();
+
         bindCoreEventListeners();
 
         // 检查浏览器兼容性
@@ -161,6 +198,102 @@ document.addEventListener('DOMContentLoaded', function() {
         hideLoadingIndicator();
     }
 });
+
+// ============ C/S 多人模式 UI 集成 ============
+/**
+ * C/S 模式 UI 初始化: 用户信息展示 / 退出登录 / 多人更新轮询与提示横幅
+ * 仅在 ApiClient.csMode 为 true 时由初始化流程调用
+ */
+function setupCSModeUI() {
+    Logger.info('Init', '启用 C/S 多人模式 UI');
+
+    // ---- 侧边栏用户区 ----
+    const userBox = document.getElementById('cs-user-box');
+    if (userBox && ApiClient.user) {
+        userBox.style.display = 'flex';
+        const nameEl = document.getElementById('cs-user-name');
+        const roleEl = document.getElementById('cs-user-role');
+        if (nameEl) nameEl.textContent = ApiClient.user.username || '未知用户';
+        if (roleEl) roleEl.textContent = ApiClient.ROLE_NAMES[ApiClient.user.role] || ApiClient.user.role || '';
+    }
+
+    // 退出登录
+    const logoutBtn = document.getElementById('cs-logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            if (confirm('确定要退出登录吗？')) ApiClient.logout();
+        });
+    }
+
+    // ---- 多人更新提示横幅 ----
+    const banner = document.getElementById('cs-update-banner');
+    const refreshBtn = document.getElementById('cs-banner-refresh-btn');
+    const dismissBtn = document.getElementById('cs-banner-dismiss-btn');
+
+    const hideBanner = () => { if (banner) banner.style.display = 'none'; };
+    if (dismissBtn) dismissBtn.addEventListener('click', hideBanner);
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            refreshBtn.disabled = true;
+            ApiClient.reloadAssetsData()
+                .then(() => {
+                    updateStatistics();
+                    renderRecentAssets();
+                    renderDamagedAssets();
+                    renderAllAssets();
+                    // 当前选中资产详情若在展示中, 同步刷新
+                    const assetIdEl = document.getElementById('asset-id');
+                    if (assetIdEl && assetIdEl.textContent && assetIdEl.textContent !== '未选择资产'
+                        && assetsData.some(a => a.id === assetIdEl.textContent)) {
+                        viewAssetDetails(assetIdEl.textContent);
+                    }
+                    hideBanner();
+                    showNotification('数据已刷新为服务器最新内容', 'success', 3000);
+                })
+                .catch(err => showNotification('刷新失败: ' + (err.message || err), 'error', 4000))
+                .finally(() => { refreshBtn.disabled = false; });
+        });
+    }
+
+    // 启动数据版本轮询(30秒): 远端变化 → 显示横幅
+    ApiClient.startVersionPolling(() => {
+        if (banner) banner.style.display = 'flex';
+    });
+
+    // ---- 用户管理菜单项(仅 admin 可见) ----
+    const usersMenu = document.querySelector('.menu-item[data-target="users"]');
+    if (usersMenu) {
+        usersMenu.style.display = (ApiClient.user && ApiClient.user.role === 'admin') ? 'flex' : 'none';
+    }
+}
+
+/**
+ * 切换运行模式入口(全局可见, 不区分单机/C/S)
+ * 清状态后带 ?switch=1 跳 login.html —— login.html 会强制进入模式选择页
+ *   - embeddedMode (Electron 内嵌单机): login.html 用 ?switch=1 绕开自动免密
+ *   - csMode (C/S 服务端): 清 token 后 login.html 不会再自动跳转
+ *   - file:// 浏览器: 清 app_mode 后 login.html 正常显示模式选择卡片
+ */
+function setupSwitchModeUI() {
+    const btn = document.getElementById('switch-mode-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+        // 1. 清运行时凭证
+        if (typeof ApiClient !== 'undefined') {
+            ApiClient.token = null;
+            ApiClient.user = null;
+        }
+        // 2. 清 localStorage 记忆(cs_auth 已随 token 一起在 ApiClient 中清, 这里兜底)
+        try {
+            localStorage.removeItem('cs_auth');
+            localStorage.removeItem('app_mode');
+            localStorage.removeItem('cs_server_url');
+        } catch (e) {}
+        // 3. 带 ?switch=1 跳 login.html, 强制进入模式选择页
+        window.location.replace('login.html?switch=1');
+    });
+}
 
 // 检查浏览器兼容性
 function checkBrowserCompatibility() {

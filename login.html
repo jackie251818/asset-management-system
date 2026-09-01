@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 电脑资产管理系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+            background: linear-gradient(135deg, #0c1428 0%, #12234a 55%, #0a3d62 100%);
+            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh; padding: 20px;
+        }
+        .login-card {
+            width: 100%; max-width: 420px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(94, 234, 212, 0.18);
+            border-radius: 14px;
+            padding: 40px 36px;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+        }
+        .login-logo { text-align: center; margin-bottom: 8px; }
+        .login-logo i {
+            font-size: 44px; color: #5eead4;
+            filter: drop-shadow(0 0 10px rgba(94, 234, 212, 0.55));
+        }
+        .login-title { text-align: center; color: #e8f1ff; font-size: 20px; font-weight: 600; letter-spacing: 1px; }
+        .login-sub { text-align: center; color: rgba(232, 241, 255, 0.55); font-size: 12px; margin: 6px 0 28px; }
+        .form-group { margin-bottom: 18px; }
+        .form-group label { display: block; color: rgba(232, 241, 255, 0.75); font-size: 13px; margin-bottom: 7px; }
+        .form-group input {
+            width: 100%; padding: 11px 14px; font-size: 14px;
+            color: #e8f1ff; background: rgba(0, 0, 0, 0.28);
+            border: 1px solid rgba(94, 234, 212, 0.22); border-radius: 8px;
+            outline: none; transition: border-color .2s, box-shadow .2s;
+        }
+        .form-group input:focus {
+            border-color: #5eead4;
+            box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.15);
+        }
+        .login-btn {
+            width: 100%; padding: 12px; margin-top: 6px;
+            font-size: 15px; font-weight: 600; letter-spacing: 4px;
+            color: #06283d; background: linear-gradient(90deg, #5eead4, #38bdf8);
+            border: none; border-radius: 8px; cursor: pointer;
+            transition: transform .15s, box-shadow .2s, opacity .2s;
+        }
+        .login-btn:hover { box-shadow: 0 6px 18px rgba(56, 189, 248, 0.4); transform: translateY(-1px); }
+        .login-btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+        .login-error {
+            display: none; margin-bottom: 16px; padding: 9px 12px;
+            font-size: 13px; color: #fecaca; background: rgba(239, 68, 68, 0.16);
+            border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px;
+        }
+        .login-tip { margin-top: 22px; text-align: center; color: rgba(232, 241, 255, 0.4); font-size: 12px; line-height: 1.8; }
+
+        /* ============ 模式选择卡片 ============ */
+        .mode-row { display: flex; gap: 14px; margin: 8px 0 6px; }
+        .mode-box {
+            flex: 1; cursor: pointer; text-align: center; padding: 26px 14px;
+            color: #e8f1ff; background: rgba(0, 0, 0, 0.26);
+            border: 1px solid rgba(94, 234, 212, 0.22); border-radius: 10px;
+            transition: border-color .2s, background .2s, transform .15s;
+        }
+        .mode-box:hover { border-color: #5eead4; background: rgba(94, 234, 212, 0.08); transform: translateY(-2px); }
+        .mode-box i { font-size: 30px; color: #5eead4; display: block; margin-bottom: 10px; }
+        .mode-box b { display: block; font-size: 15px; margin-bottom: 6px; }
+        .mode-box span { display: block; font-size: 12px; color: rgba(232, 241, 255, 0.55); line-height: 1.6; }
+        .switch-link {
+            display: block; margin-top: 18px; text-align: center;
+            color: rgba(94, 234, 212, 0.85); font-size: 12px; cursor: pointer;
+        }
+        .switch-link:hover { color: #5eead4; text-decoration: underline; }
+        .hidden { display: none !important; }
+        .splash { text-align: center; color: rgba(232, 241, 255, 0.7); font-size: 14px; padding: 30px 0; }
+        .splash i { font-size: 30px; color: #5eead4; display: block; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-logo"><i class="fas fa-laptop-code"></i></div>
+        <div class="login-title">电脑资产管理系统</div>
+        <div class="login-sub" id="view-sub">选择运行模式</div>
+
+        <!-- 模式选择视图 -->
+        <div id="mode-view">
+            <div class="mode-row">
+                <div class="mode-box" id="mode-standalone">
+                    <i class="fas fa-desktop"></i>
+                    <b>单机版</b>
+                    <span>免登录<br>数据保存在本机</span>
+                </div>
+                <div class="mode-box" id="mode-client">
+                    <i class="fas fa-server"></i>
+                    <b>C/S 版</b>
+                    <span>多人协同<br>需账号密码登录</span>
+                </div>
+            </div>
+            <div class="login-tip">
+                单机版: 数据存本机, 免登录直接使用<br>
+                C/S 版: 连接服务器, 多人共享数据
+            </div>
+        </div>
+
+        <!-- 登录视图 -->
+        <div id="login-view" class="hidden">
+            <div class="login-error" id="login-error"></div>
+            <form id="login-form" autocomplete="off">
+                <div class="form-group" id="server-group" class="hidden">
+                    <label for="server-url">服务器地址</label>
+                    <input type="text" id="server-url" name="server-url" placeholder="例如 http://192.168.1.100:3456" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username" required autofocus placeholder="请输入用户名">
+                </div>
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required placeholder="请输入密码">
+                </div>
+                <button type="submit" class="login-btn" id="login-btn">登 录</button>
+            </form>
+            <div class="switch-link" id="back-to-mode">← 返回模式选择</div>
+            <div class="login-tip">初始账号: admin / admin123（首次登录后请立即修改密码）</div>
+        </div>
+
+        <!-- 单机进入 splash -->
+        <div id="splash-view" class="hidden">
+            <div class="splash"><i class="fas fa-cog fa-spin"></i>正在进入单机模式...</div>
+        </div>
+
+        <!-- 顶部切换模式链接(已选模式后) -->
+        <div class="switch-link hidden" id="switch-mode-link">切换运行模式</div>
+    </div>
+
+    <link rel="stylesheet" href="libs/font-awesome.min.css">
+    <script src="js/api.js"></script>
+    <script>
+        (function () {
+            var modeView = document.getElementById('mode-view');
+            var loginView = document.getElementById('login-view');
+            var splashView = document.getElementById('splash-view');
+            var serverGroup = document.getElementById('server-group');
+            var sub = document.getElementById('view-sub');
+            var errBox = document.getElementById('login-error');
+            var form = document.getElementById('login-form');
+            var btn = document.getElementById('login-btn');
+            var switchLink = document.getElementById('switch-mode-link');
+            var backLink = document.getElementById('back-to-mode');
+            var isFile = window.location.protocol === 'file:';
+
+            function getAppMode() { try { return localStorage.getItem('app_mode') || ''; } catch (e) { return ''; } }
+            function setAppMode(v) { try { localStorage.setItem('app_mode', v); } catch (e) {} }
+            function clearAppMode() { try { localStorage.removeItem('app_mode'); } catch (e) {} }
+            function getServerUrl() { try { return localStorage.getItem('cs_server_url') || ''; } catch (e) { return ''; } }
+            function setServerUrl(v) { try { localStorage.setItem('cs_server_url', v); } catch (e) {} }
+            function showError(msg) { errBox.textContent = msg; errBox.style.display = 'block'; }
+            function hideError() { errBox.style.display = 'none'; }
+
+            function showModeView() {
+                modeView.classList.remove('hidden');
+                loginView.classList.add('hidden');
+                splashView.classList.add('hidden');
+                switchLink.classList.add('hidden');
+                sub.textContent = '选择运行模式';
+            }
+            function showLoginView(needServer) {
+                modeView.classList.add('hidden');
+                loginView.classList.remove('hidden');
+                splashView.classList.add('hidden');
+                sub.textContent = 'C/S 版登录';
+                switchLink.classList.remove('hidden');
+                if (needServer) serverGroup.classList.remove('hidden'); else serverGroup.classList.add('hidden');
+                hideError();
+            }
+            function showSplash(msg) {
+                modeView.classList.add('hidden');
+                loginView.classList.add('hidden');
+                splashView.classList.remove('hidden');
+                sub.textContent = msg || '';
+            }
+
+            // 已登录直接进入系统(避免登录后回到 login 页又跳走)
+            function jumpToIndex() { window.location.replace('index.html'); }
+
+            // 是否由 index.html 侧栏"切换运行模式"按钮跳转而来 — 强制进入模式选择页
+            var forceSelect = new URLSearchParams(window.location.search).get('switch') === '1';
+
+            (async function init() {
+                // 等待模式探测完成(Embedded 单机内嵌 / C/S 远端 / 本地)
+                var embedded = false, csMode = false, isLoggedIn = false;
+                if (typeof ApiClient !== 'undefined') {
+                    await ApiClient.ready();
+                    embedded = !!ApiClient.embeddedMode;
+                    csMode = !!ApiClient.csMode;
+                    isLoggedIn = !!ApiClient.isLoggedIn();
+
+                    // Electron 单机内嵌服务: 免密直进 index.html(除非强制模式选择)
+                    if (embedded && !forceSelect) {
+                        showSplash('正在进入单机模式...');
+                        setTimeout(jumpToIndex, 300);
+                        return;
+                    }
+                    // 同源 C/S 服务端 + 已登录: 直进(除非强制模式选择)
+                    if (csMode && isLoggedIn && !forceSelect) { jumpToIndex(); return; }
+                }
+
+                var mode = getAppMode();
+                // 记住上次选择: standalone 直进; client 进登录视图(除非强制模式选择)
+                if (mode === 'standalone' && !forceSelect) { jumpToIndex(); return; }
+                if (mode === 'client' && !forceSelect) {
+                    // file:// 下若无保存的服务器地址, 仍显示地址框
+                    var needServer = isFile && !getServerUrl();
+                    showLoginView(needServer);
+                    if (!needServer && isFile) document.getElementById('server-url').value = getServerUrl();
+                    return;
+                }
+                // 无模式记忆 / 强制切换: 显示模式选择
+                showModeView();
+            })();
+
+            // 模式选择: 单机版(按运行环境分支)
+            document.getElementById('mode-standalone').addEventListener('click', function () {
+                if (typeof ApiClient !== 'undefined' && ApiClient.embeddedMode) {
+                    // Electron 内嵌单机 → 已是单机, 直接跳 index
+                    showSplash('正在进入单机模式...');
+                    setTimeout(jumpToIndex, 200);
+                    return;
+                }
+                if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+                    // C/S 服务端上切单机 → 触发 Electron cs-standalone:// 协议
+                    // 非 Electron 环境此跳转无效(浏览器环境提示降级)
+                    try {
+                        location.href = 'cs-standalone://go';
+                        // 非 Electron 不会拦截, 浏览器会尝试打开外部应用; 兜底: 清 cs_auth 回模式选择
+                        setTimeout(function () { location.href = 'login.html'; }, 500);
+                    } catch (e) { location.href = 'login.html'; }
+                    return;
+                }
+                // file:// 浏览器或 HTTP C/S 非 Electron: 正常本地单机
+                setAppMode('standalone');
+                showSplash('正在进入单机模式...');
+                setTimeout(jumpToIndex, 200);
+            });
+
+            // 模式选择: C/S 版(按运行环境分支)
+            document.getElementById('mode-client').addEventListener('click', function () {
+                if (typeof ApiClient !== 'undefined' && ApiClient.embeddedMode) {
+                    // Electron 内嵌单机 → 打开连接设置窗口, 保存后重启为 C/S 客户端模式
+                    location.href = 'cs-settings://go';
+                    return;
+                }
+                // C/S 服务端上: 清掉可能残留的 cs_auth, 走登录表单
+                try { localStorage.removeItem('cs_auth'); } catch (e) {}
+                setAppMode('client');
+                var needServer = isFile && !getServerUrl();
+                showLoginView(needServer);
+                if (!needServer && isFile) document.getElementById('server-url').value = getServerUrl();
+            });
+
+            // 返回模式选择
+            backLink.addEventListener('click', function () { clearAppMode(); showModeView(); });
+
+            // 切换模式链接
+            switchLink.addEventListener('click', function () { clearAppMode(); showModeView(); });
+
+            // 登录表单提交
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                hideError();
+                var username = document.getElementById('username').value.trim();
+                var password = document.getElementById('password').value;
+                if (!username || !password) { showError('请输入用户名和密码'); return; }
+
+                // file:// 下: 先保存服务器地址
+                if (isFile) {
+                    var url = document.getElementById('server-url').value.trim();
+                    if (!url) { showError('请输入服务器地址'); return; }
+                    setServerUrl(url);
+                    ApiClient.baseURL = url.replace(/\/+$/, '');
+                }
+
+                btn.disabled = true;
+                btn.textContent = '登录中...';
+
+                ApiClient.login(username, password).then(function () {
+                    btn.textContent = '登录成功，正在跳转...';
+                    setAppMode('client');
+                    setTimeout(jumpToIndex, 300);
+                }).catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                    showError((err && err.message) || '登录失败，请稍后重试');
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

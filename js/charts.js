@@ -1,9 +1,25 @@
 /**
  * 统计报表图表渲染（资产状态、主体、部门、设备类型）
  * 从 script.js 拆分而来 - 请勿手动修改行号映射
+ *
+ * C/S 多人模式: 图表数据源优先使用服务端聚合统计 /api/stats/summary
+ * (window.__CS_STATS__), 拉取失败时降级为本地内存统计。
  */
-function renderAllReportsCharts() {
+async function renderAllReportsCharts() {
     Logger.info('Charts', '渲染报表图表 | 资产数:', assetsData.length);
+
+    // ============ C/S 多人模式: 拉取服务端聚合统计 ============
+    if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+        try {
+            window.__CS_STATS__ = await ApiClient.statsSummary();
+        } catch (e) {
+            Logger.warn('Charts', '获取服务端统计失败, 降级使用本地内存数据:', e && e.message);
+            window.__CS_STATS__ = null;
+        }
+    } else {
+        window.__CS_STATS__ = null;
+    }
+
     if (typeof Chart === 'undefined') {
         Logger.warn('Charts', 'Chart.js 库尚未加载，暂时无法渲染图表');
         console.warn('Chart.js库尚未加载，暂时无法渲染图表');
@@ -103,7 +119,7 @@ function renderAssetStatusChart() {
         window.assetStatusChartInstance = null;
     }
     
-    // 统计状态数据
+    // 统计状态数据（C/S 模式优先服务端聚合, 否则内存统计）
     const statusStats = {
         active: 0,
         idle: 0,
@@ -111,12 +127,17 @@ function renderAssetStatusChart() {
         maintenance: 0,
         retired: 0
     };
-    
-    assetsData.forEach(asset => {
-        if (asset.status && statusStats.hasOwnProperty(asset.status)) {
-            statusStats[asset.status]++;
-        }
-    });
+
+    const csStats = window.__CS_STATS__;
+    if (csStats && csStats.byStatus) {
+        Object.assign(statusStats, csStats.byStatus);
+    } else {
+        assetsData.forEach(asset => {
+            if (asset.status && statusStats.hasOwnProperty(asset.status)) {
+                statusStats[asset.status]++;
+            }
+        });
+    }
     
     // 准备图表数据
     const labels = ['在用', '闲置', '损坏', '维修中', '报废'];
@@ -213,12 +234,18 @@ function renderOwnerAssetsChart() {
         window.ownerAssetsChartInstance = null;
     }
     
-    // 统计主体数据
-    const ownerStats = {};
-    assetsData.forEach(asset => {
-        const owner = asset.owner || '未知主体';
-        ownerStats[owner] = (ownerStats[owner] || 0) + 1;
-    });
+    // 统计主体数据（C/S 模式优先服务端聚合）
+    const csStats = window.__CS_STATS__;
+    let ownerStats;
+    if (csStats && csStats.byOwner) {
+        ownerStats = Object.assign({}, csStats.byOwner);
+    } else {
+        ownerStats = {};
+        assetsData.forEach(asset => {
+            const owner = asset.owner || '未知主体';
+            ownerStats[owner] = (ownerStats[owner] || 0) + 1;
+        });
+    }
     
     // 准备图表数据
     const labels = Object.keys(ownerStats);
@@ -322,12 +349,18 @@ function renderDepartmentAssetsChart() {
         window.departmentAssetsChartInstance = null;
     }
     
-    // 统计部门数据
-    const departmentStats = {};
-    assetsData.forEach(asset => {
-        const department = asset.department || '未知部门';
-        departmentStats[department] = (departmentStats[department] || 0) + 1;
-    });
+    // 统计部门数据（C/S 模式优先服务端聚合）
+    const csStats = window.__CS_STATS__;
+    let departmentStats;
+    if (csStats && csStats.byDepartment) {
+        departmentStats = Object.assign({}, csStats.byDepartment);
+    } else {
+        departmentStats = {};
+        assetsData.forEach(asset => {
+            const department = asset.department || '未知部门';
+            departmentStats[department] = (departmentStats[department] || 0) + 1;
+        });
+    }
     
     // 准备图表数据
     const labels = Object.keys(departmentStats);
@@ -434,12 +467,18 @@ function renderAssetTypeChart() {
         window.assetTypeChartInstance = null;
     }
     
-    // 统计设备类型数据
-    const typeStats = {};
-    assetsData.forEach(asset => {
-        const type = asset.type || '未知类型';
-        typeStats[type] = (typeStats[type] || 0) + 1;
-    });
+    // 统计设备类型数据（C/S 模式优先服务端聚合）
+    const csStats = window.__CS_STATS__;
+    let typeStats;
+    if (csStats && csStats.byType) {
+        typeStats = Object.assign({}, csStats.byType);
+    } else {
+        typeStats = {};
+        assetsData.forEach(asset => {
+            const type = asset.type || '未知类型';
+            typeStats[type] = (typeStats[type] || 0) + 1;
+        });
+    }
     
     // 准备图表数据
     const labels = Object.keys(typeStats);
