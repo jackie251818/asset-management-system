@@ -2441,6 +2441,21 @@ html[data-theme="tech"] ::-webkit-scrollbar-thumb:hover {
 .cs-logout-btn i {
     font-size: 14px;
 }
+/* 退出登录两段式确认状态(红色高亮) */
+.cs-logout-btn.cs-logout-confirming {
+    color: #fff;
+    border-color: #ff4d4f;
+    background: #ff4d4f;
+    animation: csLogoutPulse 1s infinite;
+}
+.cs-logout-btn.cs-logout-confirming:hover {
+    color: #fff;
+    background: #ff7875;
+}
+@keyframes csLogoutPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.4); }
+    50% { box-shadow: 0 0 0 5px rgba(255, 77, 79, 0.15); }
+}
 .cs-changepwd-btn {
     display: flex;
     align-items: center;

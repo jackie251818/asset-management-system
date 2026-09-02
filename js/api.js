@@ -151,7 +151,8 @@ const ApiClient = {
         return payload;
     },
 
-    /** 401 处理: 清凭证 → 跳转登录页 */
+    /** 401 处理: 清凭证 → 跳转登录页
+     *  注意: 不用 alert()! Electron 同步对话框关闭后立即导航会导致登录页键盘输入失效 */
     _handleUnauthorized() {
         if (this._redirecting) return;
         this._redirecting = true;
@@ -159,8 +160,7 @@ const ApiClient = {
         this.user = null;
         try { localStorage.removeItem('cs_auth'); } catch (e) {}
         if (!/login\.html$/i.test(window.location.pathname)) {
-            alert('登录已过期或尚未登录，即将跳转到登录页');
-            window.location.href = 'login.html';
+            window.location.href = 'login.html?expired=1';
         }
     },
 

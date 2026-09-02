@@ -1473,6 +1473,10 @@ async function createClientWindow(serverConfig) {
     } catch (e) {
         console.warn('[客户端模式] session.webRequest 拦截注册失败:', e.message);
     }
+    // 每次导航完成后恢复键盘焦点(兜底: 渲染进程 alert/confirm 同步对话框会破坏输入焦点状态)
+    mainWindow.webContents.on('did-finish-load', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
+    });
     mainWindow.webContents.on('will-navigate', (event, url) => {
         if (url.startsWith('cs-retry://')) {
             event.preventDefault();

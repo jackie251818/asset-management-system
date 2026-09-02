@@ -217,11 +217,30 @@ function setupCSModeUI() {
         if (roleEl) roleEl.textContent = ApiClient.ROLE_NAMES[ApiClient.user.role] || ApiClient.user.role || '';
     }
 
-    // 退出登录
+    // 退出登录(两段式确认)
+    // 注意: 不用 confirm()! Electron 同步对话框关闭后立即导航会导致登录页键盘输入失效
     const logoutBtn = document.getElementById('cs-logout-btn');
     if (logoutBtn) {
+        let confirmTimer = null;
         logoutBtn.addEventListener('click', () => {
-            if (confirm('确定要退出登录吗？')) ApiClient.logout();
+            if (logoutBtn.dataset.confirming === '1') {
+                // 第二次点击: 确认退出
+                clearTimeout(confirmTimer);
+                logoutBtn.dataset.confirming = '0';
+                logoutBtn.classList.remove('cs-logout-confirming');
+                logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i><span>退出登录</span>';
+                ApiClient.logout();
+                return;
+            }
+            // 第一次点击: 进入待确认状态, 3 秒后自动恢复
+            logoutBtn.dataset.confirming = '1';
+            logoutBtn.classList.add('cs-logout-confirming');
+            logoutBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i><span>再次点击确认退出</span>';
+            confirmTimer = setTimeout(() => {
+                logoutBtn.dataset.confirming = '0';
+                logoutBtn.classList.remove('cs-logout-confirming');
+                logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i><span>退出登录</span>';
+            }, 3000);
         });
     }
 

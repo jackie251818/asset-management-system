@@ -175,6 +175,11 @@
                 switchLink.classList.remove('hidden');
                 if (needServer) serverGroup.classList.remove('hidden'); else serverGroup.classList.add('hidden');
                 hideError();
+                // autofocus 属性在 hidden 容器内失效, 显示后手动聚焦(50ms 等 DOM 稳定)
+                setTimeout(function () {
+                    var u = document.getElementById('username');
+                    if (u) u.focus();
+                }, 50);
             }
             function showSplash(msg) {
                 modeView.classList.add('hidden');
@@ -188,6 +193,8 @@
 
             // 是否由 index.html 侧栏"切换运行模式"按钮跳转而来 — 强制进入模式选择页
             var forceSelect = new URLSearchParams(window.location.search).get('switch') === '1';
+            // 401/登录过期跳转标记: 显示过期提示(api.js _handleUnauthorized 附带)
+            var expiredFlag = new URLSearchParams(window.location.search).get('expired') === '1';
 
             (async function init() {
                 // 等待模式探测完成(Embedded 单机内嵌 / C/S 远端 / 本地)
@@ -216,6 +223,7 @@
                     var needServer = isFile && !getServerUrl();
                     showLoginView(needServer);
                     if (!needServer && isFile) document.getElementById('server-url').value = getServerUrl();
+                    if (expiredFlag) showError('登录已过期或尚未登录，请重新登录');
                     return;
                 }
                 // 无模式记忆 / 强制切换: 显示模式选择
@@ -263,6 +271,16 @@
 
             // 返回模式选择
             backLink.addEventListener('click', function () { clearAppMode(); showModeView(); });
+
+            // 兜底: Electron 中 alert/confirm 关闭后键盘焦点可能丢失,
+            // 窗口重新获得焦点时若登录视图可见且无输入焦点, 强制聚焦用户名框
+            window.addEventListener('focus', function () {
+                if (loginView.classList.contains('hidden')) return;
+                var ae = document.activeElement;
+                if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'BUTTON')) return;
+                var u = document.getElementById('username');
+                if (u) u.focus();
+            });
 
             // 切换模式链接
             switchLink.addEventListener('click', function () { clearAppMode(); showModeView(); });
