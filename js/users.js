@@ -59,24 +59,19 @@
                 });
             });
 
-            // 绑定重置密码按钮
+            // 绑定重置密码按钮(打开自定义弹窗, 不用 prompt — Electron 会静默拦截原生对话框)
             tbody.querySelectorAll('.user-reset-btn').forEach(btn => {
                 btn.addEventListener('click', function () {
                     const id = this.getAttribute('data-id');
                     const name = this.getAttribute('data-name');
-                    const newPwd = prompt('为用户 "' + name + '" 设置新密码(至少 6 位):');
-                    if (newPwd === null) return; // 取消
-                    if (newPwd.length < 6) { alert('密码长度至少 6 位'); return; }
-                    ApiClient.resetUserPassword(id, newPwd).then(() => {
-                        if (typeof showNotification === 'function') showNotification('用户 ' + name + ' 密码已重置', 'success', 3000);
-                    }).catch(err => {
-                        alert('重置失败: ' + (err.message || err));
-                    });
+                    openResetPwdModal(id, name);
                 });
             });
         } catch (err) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#ef4444;padding:20px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
         }
+        // 同页的操作日志卡片(admin)一并刷新
+        renderAuditLog(1);
     }
 
     function escapeHtml(s) {
@@ -113,8 +108,130 @@
         });
     });
 
+    // ============ 操作日志查看(admin) ============
+
+    const AUDIT_LABELS = {
+        'auth.login': '登录成功',
+        'auth.login_failed': '登录失败',
+        'auth.logout': '退出登录',
+        'user.create': '创建用户',
+        'user.delete': '删除用户',
+        'user.reset_password': '重置密码',
+        'user.change_role': '修改角色',
+        'user.change_password': '修改自己密码',
+        'asset.create': '新增资产',
+        'asset.update': '修改资产',
+        'asset.delete': '删除资产',
+    };
+
+    function auditLabel(action) {
+        if (AUDIT_LABELS[action]) return AUDIT_LABELS[action];
+        if (/^asset\.batch/.test(action)) return '批量导入';
+        return action;
+    }
+
+    let _auditPage = 1;
+    const AUDIT_PAGE_SIZE = 20;
+
+    async function renderAuditLog(page) {
+        const card = document.getElementById('audit-card');
+        const tbody = document.getElementById('audit-tbody');
+        if (!card || !tbody) return;
+        // 非 admin 隐藏整个卡片
+        if (typeof ApiClient === 'undefined' || !ApiClient.csMode || !ApiClient.user || ApiClient.user.role !== 'admin') {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = 'block';
+        _auditPage = page || _auditPage || 1;
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px;">加载中...</td></tr>';
+        try {
+            const action = document.getElementById('audit-filter').value;
+            const username = (document.getElementById('audit-username').value || '').trim();
+            const r = await ApiClient.getAuditLogs({ page: _auditPage, pageSize: AUDIT_PAGE_SIZE, action, username });
+            const items = r.items || [];
+            document.getElementById('audit-total').textContent = '共 ' + r.total + ' 条';
+            document.getElementById('audit-pageinfo').textContent = r.total ? (r.page + ' / ' + Math.max(1, Math.ceil(r.total / r.pageSize))) : '-';
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px;">暂无日志</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(function (it) {
+                const time = it.created_at || '-';
+                const user = escapeHtml(it.username || '—');
+                const act = auditLabel(it.action);
+                const isFail = it.action === 'auth.login_failed';
+                const actColor = isFail ? '#ef4444' : (/^user\./.test(it.action) ? '#7c3aed' : (/^asset\./.test(it.action) ? '#2563eb' : '#059669'));
+                const target = escapeHtml(it.target || '—');
+                const detail = escapeHtml(it.detail || '');
+                return '<tr style="border-bottom:1px solid #f3f4f6;">'
+                    + '<td style="padding:7px 12px;white-space:nowrap;color:#6b7280;">' + escapeHtml(time) + '</td>'
+                    + '<td style="padding:7px 12px;white-space:nowrap;font-weight:500;">' + user + '</td>'
+                    + '<td style="padding:7px 12px;white-space:nowrap;color:' + actColor + ';font-weight:500;">' + escapeHtml(act) + '</td>'
+                    + '<td style="padding:7px 12px;white-space:nowrap;">' + target + '</td>'
+                    + '<td style="padding:7px 12px;color:#9ca3af;">' + detail + '</td>'
+                    + '</tr>';
+            }).join('');
+        } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#ef4444;padding:16px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
+        }
+    }
+
     // 暴露给 navigation.js 调用
     window.renderUsersList = renderUsersList;
+
+    // ============ 重置他人密码弹窗(admin 专用, 替代原生 prompt) ============
+
+    let _resetPwdTargetId = null;
+
+    function openResetPwdModal(userId, username) {
+        const modal = document.getElementById('reset-pwd-modal');
+        if (!modal) return;
+        _resetPwdTargetId = userId;
+        const targetEl = document.getElementById('reset-pwd-target');
+        if (targetEl) targetEl.innerHTML = '正在为 <b style="color:#1f2937;">' + escapeHtml(username) + '</b> 重置密码';
+        document.getElementById('reset-pwd-new').value = '';
+        document.getElementById('reset-pwd-confirm').value = '';
+        const err = document.getElementById('reset-pwd-error');
+        if (err) { err.style.display = 'none'; err.textContent = ''; }
+        modal.style.display = 'flex';
+        setTimeout(() => document.getElementById('reset-pwd-new').focus(), 50);
+    }
+
+    function closeResetPwdModal() {
+        const modal = document.getElementById('reset-pwd-modal');
+        if (modal) modal.style.display = 'none';
+        _resetPwdTargetId = null;
+    }
+
+    function showResetPwdError(msg) {
+        const el = document.getElementById('reset-pwd-error');
+        if (el) { el.textContent = msg; el.style.display = 'block'; }
+    }
+
+    async function submitResetPwd() {
+        const newPwd = document.getElementById('reset-pwd-new').value;
+        const confirmPwd = document.getElementById('reset-pwd-confirm').value;
+        if (!newPwd || !confirmPwd) { showResetPwdError('请填写所有字段'); return; }
+        if (newPwd.length < 6) { showResetPwdError('密码长度至少 6 位'); return; }
+        if (newPwd !== confirmPwd) { showResetPwdError('两次输入的密码不一致'); return; }
+
+        const btn = document.getElementById('reset-pwd-submit');
+        const origText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 提交中...';
+
+        try {
+            await ApiClient.resetUserPassword(_resetPwdTargetId, newPwd);
+            closeResetPwdModal();
+            if (typeof showNotification === 'function') showNotification('密码重置成功', 'success', 3000);
+        } catch (err) {
+            showResetPwdError(err.message || String(err));
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = origText;
+        }
+    }
 
     // ============ 修改密码弹窗(C/S 模式所有已登录用户) ============
 
@@ -167,6 +284,29 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+        // 操作日志控件(筛选/刷新/翻页)
+        document.getElementById('audit-refresh')?.addEventListener('click', () => renderAuditLog(1));
+        document.getElementById('audit-filter')?.addEventListener('change', () => renderAuditLog(1));
+        document.getElementById('audit-username')?.addEventListener('keypress', function (e) { if (e.key === 'Enter') renderAuditLog(1); });
+        document.getElementById('audit-prev')?.addEventListener('click', () => { if (_auditPage > 1) renderAuditLog(_auditPage - 1); });
+        document.getElementById('audit-next')?.addEventListener('click', function () {
+            const info = document.getElementById('audit-pageinfo').textContent || '';
+            const parts = info.split('/').map(s => parseInt(s.trim(), 10));
+            if (parts.length === 2 && parts[0] < parts[1]) renderAuditLog(_auditPage + 1);
+        });
+
+        // 重置他人密码弹窗
+        const resetModal = document.getElementById('reset-pwd-modal');
+        if (resetModal) {
+            document.getElementById('reset-pwd-close')?.addEventListener('click', closeResetPwdModal);
+            document.getElementById('reset-pwd-cancel')?.addEventListener('click', closeResetPwdModal);
+            document.getElementById('reset-pwd-submit')?.addEventListener('click', submitResetPwd);
+            resetModal.addEventListener('click', function (e) { if (e.target === resetModal) closeResetPwdModal(); });
+            document.getElementById('reset-pwd-new')?.addEventListener('keypress', function (e) { if (e.key === 'Enter') document.getElementById('reset-pwd-confirm').focus(); });
+            document.getElementById('reset-pwd-confirm')?.addEventListener('keypress', function (e) { if (e.key === 'Enter') submitResetPwd(); });
+        }
+
+        // 修改自己密码弹窗
         const modal = document.getElementById('change-pwd-modal');
         if (modal) {
             document.getElementById('cs-changepwd-btn')?.addEventListener('click', openChangePwdModal);
@@ -193,14 +333,31 @@
             await new Promise(r => setTimeout(r, 100));
         }
 
-        // 1) 读连接配置
+        // 1) 读连接配置, 填同步表单默认值 (单机模式下该地址仅用于数据迁移)
         const state = await window.connApi.get();
         const url = (state && state.serverUrl) || '';
-        const infoUrl = url || (typeof ApiClient !== 'undefined' && ApiClient.baseUrl) || '';
-
-        // 填同步表单默认值
         const urlInput = document.getElementById('cs-sync-url');
         if (urlInput && url) urlInput.value = url;
+
+        // 1.5) 运行模式分支: 单机(内嵌)模式下数据在本机, 不显示"已连接远程服务器"
+        if (typeof ApiClient !== 'undefined' && ApiClient.embeddedMode === true) {
+            const badge = document.getElementById('cs-conn-badge');
+            if (badge) {
+                badge.innerHTML = '<i class="fas fa-home" style="font-size:11px;"></i> 单机模式';
+                badge.style.color = '#1d4ed8';
+            }
+            document.getElementById('cs-server-url').textContent = '数据保存在本机';
+            const nameEl = document.getElementById('cs-server-name');
+            if (nameEl) nameEl.textContent = '未连接远程服务器';
+            const verEl = document.getElementById('cs-server-version');
+            if (verEl) verEl.textContent = '';
+            document.getElementById('cs-current-user').textContent = '本地用户 (免登录)';
+            const roleEl = document.getElementById('cs-current-role');
+            if (roleEl) roleEl.textContent = '';
+            return; // 同步表单保留(用于单机↔服务器迁移), 跳过 C/S 的 /api/info 探测
+        }
+
+        const infoUrl = url || (typeof ApiClient !== 'undefined' && ApiClient.baseUrl) || '';
 
         // 2) 显示当前登录用户
         if (typeof ApiClient !== 'undefined' && ApiClient.user) {

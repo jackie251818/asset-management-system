@@ -185,7 +185,7 @@ python -m http.server 8000
 ## 系统设置
 
 在「系统设置」页面可配置：
-- 系统名称（显示在侧边栏、浏览器标签页）
+- 系统名称（全局生效：侧边栏、浏览器标签页、**登录页 logo 与客户端窗口标题**——登录页未登录时经免鉴权 `GET /api/load?key=systemSettings` 动态拉取，改名后退出登录即可看到新名称）
 - 日期格式（yyyy/mm/dd 或 yyyy-mm-dd）
 - 每页显示记录数
 - **服务器连接卡片**（C/S 客户端模式自动显示）— 展示当前连接的服务器地址 / 名称 / 版本 / 登录用户；内置"本地 ↔ 服务器"数据双向同步按钮（拉取/推送，全量覆盖 + 二次确认，需服务端账号密码）
@@ -277,6 +277,14 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 - **rcedit-x64.exe 需要管理员权限**：写入 PE 版本资源必须以管理员身份运行 electron-builder。`scripts/build-portable.js` 已内置自动提权（非管理员 → PowerShell `Start-Process -Verb RunAs` → UAC → 重跑），无需手动右键。跳过提权时 rcedit 会报 `Fatal error: Unable to commit changes`（electron-builder 重试 3 次后继续，产物可运行但属性页缺 FileDescription/InternalName）。
 
 ## 版本历史
+
+- **v3.4.1** (2026-09-03) — 系统名称全局生效修复（登录页/窗口标题）+ 兼容层白名单修复：
+  - **登录页动态系统名称**：`login.html` 新增 `applySystemName()`，未登录时经免鉴权 `GET /api/load?key=systemSettings` 拉取系统名称，动态更新登录页 logo 文案与 `<title>`（Electron 窗口标题经 `page-title-updated` 同步）；fetch 失败时降级读 `localStorage.last_system_name` 缓存
+  - **服务端鉴权白名单精确放行**：`server/src/index.js` 全局鉴权中间件对 `GET /api/load` 仅放行公开键 `systemSettings` 与 `custom_options_*`（登录页/下拉选项需要），其余键（如 `assetManagementData` 资产数据）仍返回 401，安全边界不变
+  - **兼容层 KV 白名单支持前缀匹配**：`server/src/routes/compat.js` 的 save/delete 键名校验新增 `asset_userStateData_*` 前缀（用户视图状态数据），修复带 userId 后缀的键被 400 拒绝
+  - **设置保存提示改 toast**：`js/events.js` 保存系统设置后的原生 `alert('设置已保存')` 改为 `showNotification()`，避免 Electron 同步弹窗标题异常与键盘焦点丢失
+  - 端到端验证：浏览器 6 步（改名→退出两次→登录页→重登持久化）通过；Electron 清缓存启动窗口标题为"登录 - 固定资产管理系统PRO"；无 token 访问资产键仍 401
+  - 打包：`dist\固定资产管理系统-便携版-2.4.5.exe`（61.4 MB）
 
 - **v3.4** (2026-09-01) — 用户管理升级 + 设置页服务器信息与同步入口统一：
   - **所有用户可自助修改登录密码**：顶栏"修改密码"按钮（admin/editor/viewer 均可），前端旧密码校验 + 两次新密码一致性校验 + 最小 6 位；服务端已有 `POST /api/auth/change-password` 接口（bcrypt 校验旧密码后更新 hash），admin 仍可在"用户管理"页面重置任意用户密码。同步修改：js/api.js 新增 `changePassword()`、index.html 顶栏加按钮 + 弹窗、js/users.js 新增弹窗逻辑

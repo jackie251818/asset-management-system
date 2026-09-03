@@ -30,9 +30,17 @@ function raw(ctx, body, status = 200) {
 }
 
 const KV_KEYS = ['userStateData', 'systemSettings', 'backupHistory', 'assetCardTemplate', 'analyzedExcelFormats'];
+/** 允许的 key 前缀(匹配 userId 后缀的用户独立状态等) */
+const KV_PREFIXES = ['asset_userStateData_'];
 const OPTION_KINDS = { owner: 'owner', type: 'type', department: 'department' };
 const OPTION_KEYS = ['custom_options_owner', 'custom_options_type', 'custom_options_department',
     'custom_options_owner_deleted', 'custom_options_type_deleted', 'custom_options_department_deleted'];
+
+/** 统一判断 key 是否允许写入 kv_store */
+function isAllowedKvKey(key) {
+    if (KV_KEYS.includes(key)) return true;
+    return KV_PREFIXES.some(p => key.startsWith(p));
+}
 
 function keyToKind(key) {
     if (key === 'custom_options_owner') return { kind: 'owner', deleted: false };
@@ -180,7 +188,7 @@ router.post('/save', async (ctx) => {
         return raw(ctx, { success: true, saved: true });
     }
 
-    if (!KV_KEYS.includes(key)) throw ERR.BAD_REQUEST(`不支持的保存键: ${key}`);
+    if (!isAllowedKvKey(key)) throw ERR.BAD_REQUEST(`不支持的保存键: ${key}`);
     db.prepare(`INSERT INTO kv_store (key, value_json, updated_at) VALUES (?, ?, datetime('now','localtime'))
         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
         .run(key, JSON.stringify(value === undefined ? null : value));
@@ -193,7 +201,7 @@ router.delete('/delete', async (ctx) => {
     if (!key) throw ERR.BAD_REQUEST('缺少 key 参数');
     if (key === 'assetManagementData') throw ERR.BAD_REQUEST('不允许通过兼容接口删除资产全量数据');
     if (OPTION_KEYS.includes(key)) throw ERR.BAD_REQUEST('请使用 /api/options 接口维护选项');
-    if (!KV_KEYS.includes(key)) throw ERR.NOT_FOUND(`数据键不存在: ${key}`);
+    if (!isAllowedKvKey(key)) throw ERR.NOT_FOUND(`数据键不存在: ${key}`);
     db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
     raw(ctx, { success: true, deleted: true });
 });

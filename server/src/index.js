@@ -13,7 +13,7 @@ const fs = require('fs');
 
 const config = require('./config');
 const { errorMiddleware } = require('./errors');
-const { authMiddleware, authRouter, usersRouter } = require('./auth');
+const { authMiddleware, authRouter, usersRouter, auditRouter } = require('./auth');
 const assetsRouter = require('./routes/assets').router;
 const optionsRouter = require('./routes/options').router;
 const statsRouter = require('./routes/stats').router;
@@ -113,7 +113,12 @@ app.use(async (ctx, next) => {
 });
 
 app.use(async (ctx, next) => {
-    const isPublic = PUBLIC_ROUTES.some(([m, p]) => ctx.method === m && ctx.path === p);
+    const isPublic = PUBLIC_ROUTES.some(([m, p]) => ctx.method === m && ctx.path === p)
+        // GET /api/load 对 systemSettings + custom_options_* 免鉴权(登录页动态系统名称/选项用)
+        || (ctx.method === 'GET' && ctx.path === '/api/load' && (() => {
+            const key = String(ctx.query.key || '').trim();
+            return key === 'systemSettings' || key.startsWith('custom_options_');
+        })());
     if (isPublic) return next();
     if (!ctx.path.startsWith('/api/')) {
         ctx.status = 404;
@@ -125,6 +130,7 @@ app.use(async (ctx, next) => {
 
 app.use(authRouter.routes()).use(authRouter.allowedMethods());
 app.use(usersRouter.routes()).use(usersRouter.allowedMethods());
+app.use(auditRouter.routes()).use(auditRouter.allowedMethods());
 app.use(assetsRouter.routes()).use(assetsRouter.allowedMethods());
 app.use(optionsRouter.routes()).use(optionsRouter.allowedMethods());
 app.use(statsRouter.routes()).use(statsRouter.allowedMethods());

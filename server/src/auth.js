@@ -59,22 +59,37 @@ function requireAdmin(ctx) {
     if (ctx.state.user.role !== 'admin') throw ERR.FORBIDDEN('该操作需要管理员权限');
 }
 
+/** 审计日志(与 routes/assets.js 的 audit_log 表共用) */
+function audit(username, action, target, detail) {
+    db.prepare('INSERT INTO audit_log (username, action, target, detail) VALUES (?, ?, ?, ?)')
+        .run(username || null, action, target || null, detail || null);
+}
+
 // ============ 认证路由 ============
 
 /** POST /api/auth/login { username, password } → { token, user } */
 router.post('/login', async (ctx) => {
     const { username, password } = ctx.request.body || {};
     if (!username || !password) throw ERR.BAD_REQUEST('请输入用户名和密码');
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username).trim());
+    const name = String(username).trim();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(name);
     if (!user || !bcrypt.compareSync(String(password), user.password_hash)) {
+        audit(name, 'auth.login_failed', null, '用户名或密码错误');   // 登录失败审计
         throw ERR.UNAUTHORIZED('用户名或密码错误');
     }
+    audit(user.username, 'auth.login');                               // 登录成功审计
     ok(ctx, { token: signToken(user), user: { id: user.id, username: user.username, role: user.role } });
 });
 
 /** GET /api/auth/me → 当前用户信息 */
 router.get('/me', async (ctx) => {
     ok(ctx, { id: ctx.state.user.id, username: ctx.state.user.username, role: ctx.state.user.role });
+});
+
+/** POST /api/auth/logout — 退出审计(JWT 无状态, 凭证由前端清除) */
+router.post('/logout', async (ctx) => {
+    audit(ctx.state.user.username, 'auth.logout');
+    ok(ctx, { loggedOut: true });
 });
 
 /** POST /api/auth/change-password { oldPassword, newPassword } */
@@ -86,6 +101,7 @@ router.post('/change-password', async (ctx) => {
     if (!bcrypt.compareSync(String(oldPassword), row.password_hash)) throw ERR.BAD_REQUEST('旧密码错误');
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
         .run(bcrypt.hashSync(String(newPassword), 10), ctx.state.user.id);
+    audit(ctx.state.user.username, 'user.change_password');           // 修改自己密码审计
     ok(ctx, { changed: true });
 });
 
@@ -108,6 +124,7 @@ usersRouter.post('/', async (ctx) => {
     if (!['admin', 'editor', 'viewer'].includes(role)) throw ERR.BAD_REQUEST('角色必须是 admin/editor/viewer');
     const info = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
         .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role);
+    audit(ctx.state.user.username, 'user.create', String(username).trim(), 'role=' + role);
     ok(ctx, { id: info.lastInsertRowid, username, role }, 201);
 });
 
@@ -116,7 +133,7 @@ usersRouter.delete('/:id', async (ctx) => {
     requireAdmin(ctx);
     const id = parseInt(ctx.params.id, 10);
     if (id === ctx.state.user.id) throw ERR.BAD_REQUEST('不能删除自己的账号');
-    const target = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
+    const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id);
     if (!target) throw ERR.NOT_FOUND('用户不存在');
     // 保护最后一个 admin: 若被删者是 admin 且当前 admin 仅剩 1 个, 拒绝(避免锁死系统)
     if (target.role === 'admin') {
@@ -124,6 +141,7 @@ usersRouter.delete('/:id', async (ctx) => {
         if (adminCount <= 1) throw ERR.BAD_REQUEST('不能删除最后一个管理员账号(至少保留一个)');
     }
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    audit(ctx.state.user.username, 'user.delete', target.username, 'role=' + target.role);
     ok(ctx, { deleted: true });
 });
 
@@ -143,14 +161,41 @@ usersRouter.patch('/:id', async (ctx) => {
             if (adminCount <= 1) throw ERR.BAD_REQUEST('不能降级最后一个管理员账号(至少保留一个)');
         }
         db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+        audit(ctx.state.user.username, 'user.change_role', target.username, target.role + ' -> ' + role);
     }
     // 重置密码: 长度校验 + bcrypt 哈希(轮次 10, 与创建/登录一致)
     if (password !== undefined) {
         if (String(password).length < 6) throw ERR.BAD_REQUEST('密码长度至少 6 位');
         db.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
             .run(bcrypt.hashSync(String(password), 10), id);
+        audit(ctx.state.user.username, 'user.reset_password', target.username);
     }
     ok(ctx, { id, username: target.username, role: role !== undefined ? role : target.role });
 });
 
-module.exports = { authMiddleware, requireWrite, requireAdmin, authRouter: router, usersRouter };
+// ============ 操作日志查询(admin) ============
+
+const auditRouter = new Router({ prefix: '/api/audit' });
+
+/** GET /api/audit?page=1&pageSize=50&action=auth&username=x
+ *  action 按前缀筛选: auth(登录相关) / asset(资产操作) / user(用户管理) */
+auditRouter.get('/', async (ctx) => {
+    requireAdmin(ctx);
+    const page = Math.max(1, parseInt(ctx.query.page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(ctx.query.pageSize, 10) || 50));
+    const action = (ctx.query.action || '').toString().trim();
+    const username = (ctx.query.username || '').toString().trim();
+    const where = [];
+    const params = [];
+    if (action) { where.push('action LIKE ?'); params.push(action + '%'); }
+    if (username) { where.push('username LIKE ?'); params.push('%' + username + '%'); }
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM audit_log ${whereSql}`).get(...params).n;
+    const items = db.prepare(
+        `SELECT id, username, action, target, detail, created_at FROM audit_log ${whereSql}
+         ORDER BY id DESC LIMIT ? OFFSET ?`
+    ).all(...params, pageSize, (page - 1) * pageSize);
+    ok(ctx, { items, total, page, pageSize });
+});
+
+module.exports = { authMiddleware, requireWrite, requireAdmin, audit, authRouter: router, usersRouter, auditRouter };

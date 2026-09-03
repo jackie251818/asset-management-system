@@ -628,6 +628,8 @@ Content-Type: application/json
 >
 > 错误页三个按钮行为不变（重新连接 / 修改设置 / 改用单机），但用户现在能看到**明确的根因提示**而非裸 404。预检与拦截全部在主进程实现（Node.js http 模块 + Electron webRequest API），不依赖远程页面的任何脚本执行。
 
+> 打包验证（2026-09-03，便携 EXE v2.4.5 / 61.4 MB，`dist\固定资产管理系统-便携版-2.4.5.exe`）：修复"系统设置改名后登录页仍显示旧名"——根因为全局鉴权中间件未放行 `GET /api/load?key=systemSettings`，未登录的登录页 fetch 被 401 拒绝。修复后 Electron 清缓存启动，登录页 logo 与窗口标题均显示"固定资产管理系统PRO"；安全边界实测：公开键（systemSettings / custom_options_*）无 token 返回 200，业务键（assetManagementData）无 token 仍 401；浏览器端到端 6 步（改名→退出两次→登录页输入→重登持久化）通过。
+
 > 打包验证（2026-09-01，便携 EXE v2.4.5 / 61.44 MB，最终构建 `dist_build_20260901130854`）：asar 含全部新代码（`probeClientServer`、`webRequest.onHeadersReceived`、增强的 `clientErrorPageHtml` 带 hint 参数）；在远程服务器 `http://192.168.40.251:3456`（API 正常 / 静态已补传 HTTP 200）上探测预检逻辑：API 200 + 静态 200 → `ok=true` 正常 loadURL；静态缺失（404）场景预检能准确区分"API 活 / 静态死"并给出精准修复建议。
 
 > 打包验证（2026-08-31，便携 EXE v2.4.5 / 61.44 MB）：asar 含 `connection.html`/`connection-preload.js`；Ctrl+Alt+S 拉起设置窗口（CDP 注入按键不触发菜单加速器，实测须用 `SetForegroundWindow + SendKeys` 发送 OS 级按键）；`get`/`test`/`save`/`apply`/`clear` 全链路通过——`save` 写入 `%APPDATA%\asset-management-system\connection.json`，`apply` 触发 `app.relaunch()` 重启后仍直连服务端（应用内设置优先级高于 exe 旁配置文件）；`clear` + 重启回单机模式（内嵌服务随机端口，数据目录 `%APPDATA%\asset-management-system\data\` 正常落盘）。
@@ -638,8 +640,8 @@ Content-Type: application/json
 
 新服务端实现了旧版薄 API 兼容层（`/api/load`、`/api/save`、`/api/list`、`/api/ping`、`/api/delete`、`/api/info`、`/api/data-version`），契约与旧版完全一致：
 
-- `GET` 读接口免鉴权（与旧版"GET 放行"策略一致）；
-- `POST/DELETE` 写接口需要 JWT（`Authorization: Bearer` 或 `X-Server-Token` 头均可）；
+- 读接口鉴权策略（2026-09-03 起精确化）：`GET /api/ping`、`GET /api/info`、`GET /api/list` 全量免鉴权；`GET /api/load` **仅公开键免鉴权**——`key=systemSettings`（登录页动态系统名称）与 `key=custom_options_*`（下拉选项），其余键（如 `assetManagementData` 资产数据、`asset_userStateData_*` 用户状态）仍必须携带 JWT，否则 401；
+- `POST/DELETE` 写接口需要 JWT（`Authorization: Bearer` 或 `X-Server-Token` 头均可）；写接口的键名还受 compat 层白名单约束（`KV_KEYS` 精确名单 + `asset_userStateData_` 前缀匹配）；
 - 旧前端切换到新服务端只需：登录获取 token → 注入 `window.__SERVER_TOKEN__`。
 
 ---
@@ -1356,8 +1358,10 @@ docker run -d --name asset-server --restart unless-stopped \
 | POST | `/api/assets/batch` | 写角色 | 批量导入（事务，mode=merge/replace） |
 | GET/POST/DELETE | `/api/options/...` | 读/写角色 | 下拉选项维护 |
 | GET | `/api/stats/summary` | 是 | 仪表盘统计聚合 |
-| GET | `/api/ping`、`/api/info`、`/api/list`、`/api/load?key=` | 否 | 兼容层探活/元信息/读 |
-| POST | `/api/save?key=`、DELETE `/api/delete?key=` | 写角色 | 兼容层写（旧契约） |
+| GET | `/api/ping`、`/api/info`、`/api/list` | 否 | 兼容层探活/元信息/键列表 |
+| GET | `/api/load?key=systemSettings`、`/api/load?key=custom_options_*` | 否 | 兼容层读公开键（登录页系统名称/下拉选项，2026-09-03 起放行） |
+| GET | `/api/load?key=`（其余键，如 `assetManagementData`） | 是 | 兼容层读业务数据（旧契约，需 JWT） |
+| POST | `/api/save?key=`、DELETE `/api/delete?key=` | 写角色 | 兼容层写（旧契约；键名须在白名单：`KV_KEYS` 或 `asset_userStateData_` 前缀） |
 
 统一成功格式 `{code:0,message:"ok",data}`（兼容层 `load/save` 为旧契约 `{success,data}`）；错误返回 `{code,message}`，HTTP 状态码同步设置。
 

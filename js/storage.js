@@ -1556,6 +1556,17 @@ function saveToLocalStorage() {
                 lastSaved: new Date().toISOString()
             };
             storageManager._saveToLocalStorage(STORAGE_KEYS.USER_STATE_DATA, csUserState);
+
+            // 系统级设置(名称/日期格式/每页条数)同步到服务端, 跨登录持久化
+            // 其他各端私有状态(筛选/分页)只留本地
+            try {
+                const sys = csUserState.systemSettings || {};
+                if (sys.systemName) {
+                    storageManager.setItem('systemSettings', sys).catch((e) => {
+                        console.warn('C/S 同步 systemSettings 到服务端失败:', e?.message || e);
+                    });
+                }
+            } catch (_) {}
         } catch (e) {
             console.warn('C/S 模式本地缓存写入失败:', e);
         }
@@ -1684,9 +1695,19 @@ function loadFromLocalStorage(callback) {
                 // 加载用户状态数据
                 const loadedUserState = await storageManager.getItem(STORAGE_KEYS.USER_STATE_DATA);
 
-                if (loadedUserState) {
+                // C/S 模式: 系统级设置从服务端独立 key(systemSettings) 读取, 跨登录持久化
+                // 其他各端私有状态(筛选/分页)保持 getUserStateData 的返回
+                let serverSystemSettings = null;
+                if (storageManager.csMode) {
                     try {
-                        const userState = loadedUserState;
+                        const ss = await storageManager.getItem('systemSettings');
+                        if (ss && typeof ss === 'object') serverSystemSettings = ss;
+                    } catch (_) {}
+                }
+
+                if (loadedUserState || serverSystemSettings) {
+                    try {
+                        const userState = loadedUserState || {};
 
                         // switchPage 同步保存 currentView 到 localStorage，
                         // 但 getItem 可能从 IndexedDB 读取旧数据（无 currentView），
@@ -1711,9 +1732,10 @@ function loadFromLocalStorage(callback) {
                             currentZoom = userState.currentZoom;
                         }
 
-                        // 恢复系统设置
-                        if (userState.systemSettings) {
-                            const systemSettings = userState.systemSettings;
+                        // 恢复系统设置(优先用服务端独立 key, 其次用 userState.systemSettings)
+                        const effectiveSystemSettings = serverSystemSettings || (userState && userState.systemSettings);
+                        if (effectiveSystemSettings) {
+                            const systemSettings = effectiveSystemSettings;
 
                             if (systemSettings.systemName) {
                                 const nameInput = document.getElementById('system-name');

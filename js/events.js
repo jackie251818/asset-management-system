@@ -208,7 +208,7 @@ function bindDataDependentEventListeners() {
             // 刷新资产列表以应用新的分页设置
             renderAllAssets();
             
-            alert('设置已保存');
+            showNotification('设置已保存', 'success');
         });
         
         // 系统名称输入时实时更新标题（无需等待保存）
@@ -711,7 +711,11 @@ function updateFileSyncStatus() {
         // 服务器模式 — 不需要连接/断开按钮（已自动保存）
         statusBox.style.background = '#e6f7ff';
         statusBox.style.borderColor = '#91d5ff';
-        statusElement.innerHTML = '✅ <strong>服务器模式</strong>：数据通过服务器自动保存到 JSON 文件，无需手动同步。';
+        // 区分单机(内嵌服务)与 C/S 服务器模式, 文案分别表述
+        const isEmbedded = typeof ApiClient !== 'undefined' && ApiClient.embeddedMode === true;
+        statusElement.innerHTML = isEmbedded
+            ? '✅ <strong>单机模式</strong>：数据通过内嵌服务自动保存到本机 JSON 文件（见上方「数据保存位置」），无需手动同步。'
+            : '✅ <strong>服务器模式</strong>：数据通过服务器自动保存到 JSON 文件，无需手动同步。';
         if (connectBtn) connectBtn.style.display = 'none';
         if (disconnectBtn) disconnectBtn.style.display = 'none';
     } else if (storageManager.isFileSyncEnabled && storageManager.dataDirHandle) {

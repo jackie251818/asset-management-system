@@ -944,6 +944,7 @@ let httpServer = null;
 
 /** 客户端模式失败兜底:本次启动强制单机(不改动任何已保存设置) */
 let forceStandaloneOnce = false;
+let switchingToStandalone = false;   // cs-standalone 切换中: 抑制 window-all-closed 的 app.quit() (否则销毁旧窗口会闪退)
 
 /**
  * ============ C/S 客户端模式配置 ============
@@ -1490,10 +1491,13 @@ async function createClientWindow(serverConfig) {
             event.preventDefault();
             console.log('[客户端模式] 用户选择改用单机模式(本次启动生效, 不改动已保存设置)...');
             forceStandaloneOnce = true;
+            switchingToStandalone = true;   // 防止旧窗口销毁触发 window-all-closed → app.quit() 闪退
             const win = mainWindow;
             mainWindow = null;
             if (win && !win.isDestroyed()) win.destroy();
-            startStandaloneMode();
+            Promise.resolve(startStandaloneMode())
+                .catch((e) => console.error('[客户端模式] 切换单机模式失败:', e))
+                .finally(() => { switchingToStandalone = false; });
         }
     });
 
@@ -1653,8 +1657,9 @@ app.whenReady().then(() => {
     });
 });
 
-// 所有窗口关闭时退出应用(除 macOS 外)
+// 所有窗口关闭时退出应用(除 macOS 外); 单机模式切换中除外(旧窗口已销毁, 新窗口初始化中)
 app.on('window-all-closed', () => {
+    if (switchingToStandalone) return;
     if (process.platform !== 'darwin') {
         app.quit();
     }

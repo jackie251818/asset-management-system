@@ -1,6 +1,6 @@
 # C/S 架构改造变更摘要
 
-> 改造周期：2026-08-30（单日完成阶段 1-3 及三项增强）；2026-08-31 增补增强 ④⑤；2026-09-01 增补增强 ⑥（服务端信息面板 + 数据手动双向同步 + sandbox 修复）
+> 改造周期：2026-08-30（单日完成阶段 1-3 及三项增强）；2026-08-31 增补增强 ④⑤；2026-09-01 增补增强 ⑥（服务端信息面板 + 数据手动双向同步 + sandbox 修复）；2026-09-03 修复系统名称登录页不生效（鉴权白名单精确放行 + 兼容层前缀白名单 + alert 改 toast，修复记录 #16-18）
 > 关联文档：`CS架构部署文档.md`（部署操作手册）
 
 ---
@@ -174,6 +174,9 @@
 | 13 | 打包 EXE 启动后 mainWindow 显示 404 | **`build.files` 白名单缺 `login.html`**（electron-builder 无默认兜底） | `package.json.build.files` 加 `"login.html"`；同时补 `build-portable.js` 自动提权（rcedit 管理员权限） |
 | 14 | 打包 EXE 连接设置窗口"测试连接/保存并重启"按钮点击无反应（dev 模式正常） | Electron `sandbox: true` + asar 内 preload：Electron 初始化 preload 时 asar 虚拟文件系统尚未就绪，`require('electron')` 静默失败 → preload 整体中断 → `window.connApi === undefined` → 页面内 `connApi.test(...)` 同步 throw TypeError（Promise 链外，`.catch` 接不住）→ 界面无任何反馈 | `createConnectionWindow` 改 `sandbox: false`；`connection-preload.js` 整体 try-catch 兜底（失败时 console.error 可见）；经验证 asar 内 `sandbox:false` 与 try-catch 均生效，打包 EXE 全链路恢复可用 |
 | 15 | #14 修复重打包后按钮**仍然**全部无反应（窗口能开、无任何报错，模式卡片/脚注均无初始状态） | 重写 `connection.html` 时新增了 CSP meta `script-src 'self'`，而页面逻辑是**内联 `<script>`** → 内联脚本被 CSP 静默拦截，所有事件监听未绑定、`connApi.get()` 初始化也没跑 | 移除 CSP meta（本地离线页面无需 script-src 限制，源码留注释防回归）；CDP 实测（`--remote-debugging-port` + Ctrl+Alt+S 拉窗）：connApi 注入 ✓、footnote 初始化 ✓、模式卡片切换 ✓、测试连接"√ 连接成功" ✓、服务端信息面板真实数据渲染 ✓ |
+| 16 | 系统设置改了系统名称后，**登录页 logo 与窗口标题仍是旧名"电脑资产管理系统"**（浏览器已登录态正常，Electron 清缓存后必现） | 登录页未登录无 JWT，`login.html` 拉取 `GET /api/load?key=systemSettings` 被全局鉴权中间件 401 拒绝（白名单仅 login/ping/list/info）；浏览器里因携带已登录 token 而"看起来正常"，掩盖了问题 | ① `login.html` 新增 `applySystemName()`：fetch 系统设置动态更新 `<title>` 与 `.login-title`，失败降级 `localStorage.last_system_name`；② `server/src/index.js` 鉴权中间件对 `GET /api/load` 精确放行公开键（`systemSettings` / `custom_options_*`），业务键仍 401；③ `main.js` 窗口标题经 `page-title-updated` 跟随页面 title |
+| 17 | C/S 模式保存用户视图状态（`asset_userStateData_<userId>` 键）被服务端 400 拒绝 | compat 层 save/delete 键名白名单 `KV_KEYS` 为精确匹配数组，带 userId 后缀的动态键不在名单内 | `server/src/routes/compat.js` 新增 `KV_PREFIXES = ['asset_userStateData_']` 前缀匹配 + `isAllowedKvKey()` 统一校验，save/delete 路由共用 |
+| 18 | 系统设置点"保存设置"后弹出原生 alert，Electron 下弹窗标题显示 appId（asset-management-system）且同步弹窗破坏键盘焦点 | `js/events.js` 保存回调使用浏览器原生 `alert('设置已保存')`，Electron 包装为同步对话框且标题取 appId | 改为 `showNotification('设置已保存', 'success')` toast 通知，与应用内其他反馈一致 |
 
 ---
 
@@ -193,6 +196,7 @@
 | 侧栏"切换运行模式"入口：4 种运行环境按 matrix 分支分流、Electron 内嵌补 cs-settings:// 拦截 | 通过 |
 | CORS 跨域兼容（Origin:null 反射、OPTIONS 预检 204） | 通过 |
 | 连接设置窗口服务端信息面板 + 数据手动双向同步（服务端 192.168.40.251:3456 实测：拉取 7 键 / 推送 7 键 / 双向一致性 / 必填校验） | 通过 |
+| 系统名称全局生效（2026-09-03）：浏览器端到端 6 步（改名→退出两次→登录页显示新名→重登持久化）；Electron 清缓存启动登录页 logo/窗口标题为新名；公开键无 token 200、业务键无 token 401 | 通过 |
 
 ---
 

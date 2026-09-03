@@ -123,15 +123,22 @@ const ApiClient = {
             throw err;
         }
 
-        if (resp.status === 401) {
-            this._handleUnauthorized();
-            const err = new Error('登录已过期，请重新登录');
-            err.code = 40100;
-            throw err;
-        }
-
         let payload = null;
         try { payload = await resp.json(); } catch (e) { /* 非 JSON 响应 */ }
+
+        if (resp.status === 401) {
+            // 登录接口的 401 = 用户名或密码错误(凭证错误), 不是会话过期 — 保留服务端原始消息
+            const isLoginReq = /\/api\/auth\/login/.test(url);
+            if (!isLoginReq) {
+                this._handleUnauthorized();
+                const err = new Error('登录已过期，请重新登录');
+                err.code = 40100;
+                throw err;
+            }
+            const err = new Error((payload && payload.message) || '用户名或密码错误');
+            err.code = (payload && payload.code) || 40100;
+            throw err;
+        }
 
         if (!resp.ok) {
             const err = new Error((payload && payload.message) || ('请求失败: HTTP ' + resp.status));
@@ -175,8 +182,18 @@ const ApiClient = {
         return data.user;
     },
 
-    /** 退出登录: 清凭证并回登录页 */
+    /** 退出登录: 上报服务端审计(尽力而为) → 清凭证并回登录页 */
     logout() {
+        const t = this.token;
+        if (t && this._baseUrl()) {
+            try {
+                fetch(this._baseUrl() + '/api/auth/logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + t },
+                    keepalive: true,
+                }).catch(function () {});
+            } catch (e) { /* 忽略上报失败 */ }
+        }
         this.token = null;
         this.user = null;
         try { localStorage.removeItem('cs_auth'); } catch (e) {}
@@ -192,6 +209,16 @@ const ApiClient = {
 
     /** 用户列表(admin) */
     getUsers() { return this.request('GET', '/api/users'); },
+
+    /** 操作日志(admin): params { page, pageSize, action, username } */
+    getAuditLogs(params) {
+        const q = [];
+        if (params && params.page) q.push('page=' + encodeURIComponent(params.page));
+        if (params && params.pageSize) q.push('pageSize=' + encodeURIComponent(params.pageSize));
+        if (params && params.action) q.push('action=' + encodeURIComponent(params.action));
+        if (params && params.username) q.push('username=' + encodeURIComponent(params.username));
+        return this.request('GET', '/api/audit' + (q.length ? '?' + q.join('&') : ''));
+    },
 
     /** 新建用户(admin) { username, password, role } */
     createUser(user) { return this.request('POST', '/api/users', user); },

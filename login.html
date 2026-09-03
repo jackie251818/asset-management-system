@@ -124,7 +124,6 @@
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
             </form>
             <div class="switch-link" id="back-to-mode">← 返回模式选择</div>
-            <div class="login-tip">初始账号: admin / admin123（首次登录后请立即修改密码）</div>
         </div>
 
         <!-- 单机进入 splash -->
@@ -133,11 +132,10 @@
         </div>
 
         <!-- 顶部切换模式链接(已选模式后) -->
-        <div class="switch-link hidden" id="switch-mode-link">切换运行模式</div>
     </div>
 
     <link rel="stylesheet" href="libs/font-awesome.min.css">
-    <script src="js/api.js"></script>
+    <script src="js/api.js?v=3.4.4"></script>
     <script>
         (function () {
             var modeView = document.getElementById('mode-view');
@@ -148,7 +146,6 @@
             var errBox = document.getElementById('login-error');
             var form = document.getElementById('login-form');
             var btn = document.getElementById('login-btn');
-            var switchLink = document.getElementById('switch-mode-link');
             var backLink = document.getElementById('back-to-mode');
             var isFile = window.location.protocol === 'file:';
 
@@ -164,7 +161,6 @@
                 modeView.classList.remove('hidden');
                 loginView.classList.add('hidden');
                 splashView.classList.add('hidden');
-                switchLink.classList.add('hidden');
                 sub.textContent = '选择运行模式';
             }
             function showLoginView(needServer) {
@@ -172,14 +168,60 @@
                 loginView.classList.remove('hidden');
                 splashView.classList.add('hidden');
                 sub.textContent = 'C/S 版登录';
-                switchLink.classList.remove('hidden');
                 if (needServer) serverGroup.classList.remove('hidden'); else serverGroup.classList.add('hidden');
                 hideError();
-                // autofocus 属性在 hidden 容器内失效, 显示后手动聚焦(50ms 等 DOM 稳定)
-                setTimeout(function () {
+                // autofocus 属性在 hidden 容器内失效, 显示后手动聚焦
+                // Electron 页面导航后键盘焦点会丢失, 必须用持续重试 + 多事件兜底
+                var retryCount = 0;
+                var maxRetry = 25; // 25 * 80ms = 2s
+                var retryTimer = setInterval(function () {
                     var u = document.getElementById('username');
-                    if (u) u.focus();
-                }, 50);
+                    if (u && !document.hidden) {
+                        u.focus();
+                        // 成功: 聚焦后立即触发一次 select 确保完全激活
+                        try { u.select(); } catch (_) {}
+                    }
+                    retryCount++;
+                    if (retryCount >= maxRetry) {
+                        clearInterval(retryTimer);
+                    }
+                }, 80);
+                // 窗口/页面事件兜底: 任意时机尝试恢复焦点
+                var focusRecovery = function () {
+                    if (document.hidden) return;
+                    var u = document.getElementById('username');
+                    if (u && document.activeElement !== u) {
+                        u.focus();
+                        try { u.select(); } catch (_) {}
+                    }
+                };
+                window.addEventListener('focus', focusRecovery);
+                window.addEventListener('pageshow', focusRecovery);
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) focusRecovery();
+                });
+                // 拦截输入框 blur: 被意外移除焦点时立刻拉回来
+                var setupBlurGuard = function () {
+                    ['username', 'password'].forEach(function (id) {
+                        var el = document.getElementById(id);
+                        if (el) {
+                            el.addEventListener('blur', function () {
+                                // 延迟一帧再 focus, 让正常的点击切换(点密码框)有机会生效
+                                setTimeout(function () {
+                                    if (document.hidden) return;
+                                    var u = document.getElementById('username');
+                                    var p = document.getElementById('password');
+                                    // 如果当前焦点没落到另一个输入框上, 拉回
+                                    var ae = document.activeElement;
+                                    if (ae !== u && ae !== p) {
+                                        (u || p) && (u || p).focus();
+                                    }
+                                }, 50);
+                            });
+                        }
+                    });
+                };
+                setTimeout(setupBlurGuard, 100);
             }
             function showSplash(msg) {
                 modeView.classList.add('hidden');
@@ -195,6 +237,32 @@
             var forceSelect = new URLSearchParams(window.location.search).get('switch') === '1';
             // 401/登录过期跳转标记: 显示过期提示(api.js _handleUnauthorized 附带)
             var expiredFlag = new URLSearchParams(window.location.search).get('expired') === '1';
+
+            // ============ 动态系统名称: 从服务端读取 systemSettings 更新 title/logo ============
+            (async function applySystemName() {
+                try {
+                    var r = await fetch('/api/load?key=systemSettings');
+                    if (!r.ok) return;
+                    var payload = await r.json();
+                    var name = payload && payload.data && payload.data.systemName;
+                    if (name && typeof name === 'string' && name.trim()) {
+                        name = name.trim();
+                        document.title = '登录 - ' + name;
+                        var logoTitle = document.querySelector('.login-title');
+                        if (logoTitle) logoTitle.textContent = name;
+                        try { localStorage.setItem('last_system_name', name); } catch (_) {}
+                    }
+                } catch (_) {
+                    try {
+                        var cached = localStorage.getItem('last_system_name');
+                        if (cached) {
+                            document.title = '登录 - ' + cached;
+                            var logoTitle2 = document.querySelector('.login-title');
+                            if (logoTitle2) logoTitle2.textContent = cached;
+                        }
+                    } catch (_) {}
+                }
+            })();
 
             (async function init() {
                 // 等待模式探测完成(Embedded 单机内嵌 / C/S 远端 / 本地)
@@ -282,8 +350,7 @@
                 if (u) u.focus();
             });
 
-            // 切换模式链接
-            switchLink.addEventListener('click', function () { clearAppMode(); showModeView(); });
+            // 切换模式链接 showModeView(); });
 
             // 登录表单提交
             form.addEventListener('submit', function (e) {
