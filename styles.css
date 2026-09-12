@@ -125,6 +125,12 @@ input:focus, select:focus, textarea:focus {
     --info-fg-muted: #5376a8;
     --info-fg-soft: #6b86af;
 
+    /* 提示框语义色(信息蓝/成功绿/警告黄/危险红), 深色主题下自动反色 */
+    --note-info-bg: #eff6ff;     --note-info-border: #bfdbfe;     --note-info-fg: #1e40af;
+    --note-success-bg: #f0fdf4;  --note-success-border: #bbf7d0;  --note-success-fg: #166534;
+    --note-warn-bg: #fffbeb;     --note-warn-border: #fde68a;     --note-warn-fg: #92400e;
+    --note-danger-bg: #fef2f2;    --note-danger-border: #fecaca;   --note-danger-fg: #991b1b;
+
     /* 灰阶与背景 */
     --bg-body: #f5f7fa;
     --bg-surface: #ffffff;
@@ -182,6 +188,10 @@ html[data-theme="dark"] {
     --info-fg: #9cc3ef;
     --info-fg-muted: #7ba3d4;
     --info-fg-soft: #5d82b0;
+    --note-info-bg: #12283f;     --note-info-border: #1e3d5e;     --note-info-fg: #9cc3ef;
+    --note-success-bg: #0f2a1c;  --note-success-border: #1c4a30;  --note-success-fg: #86efac;
+    --note-warn-bg: #2a2410;     --note-warn-border: #4a3f1c;     --note-warn-fg: #fcd34d;
+    --note-danger-bg: #2a1416;   --note-danger-border: #4a2226;   --note-danger-fg: #fca5a5;
     --border: #2c3a52;
     --border-input: #2c3a52;
     --border-card: #2c3a52;
@@ -211,6 +221,10 @@ html[data-theme="black"] {
     --info-fg: #8fd8e8;
     --info-fg-muted: #6a9fae;
     --info-fg-soft: #4e7a86;
+    --note-info-bg: #0d1417;     --note-info-border: #1c3540;     --note-info-fg: #8fd8e8;
+    --note-success-bg: #0c1a10;  --note-success-border: #1d3a26;  --note-success-fg: #7ee2a8;
+    --note-warn-bg: #1a1608;     --note-warn-border: #3d3412;     --note-warn-fg: #e8c968;
+    --note-danger-bg: #1a0c0e;   --note-danger-border: #3a1c20;   --note-danger-fg: #ef9a9a;
     --border: #232329;
     --border-input: #232329;
     --border-card: #232329;
@@ -241,6 +255,10 @@ html[data-theme="tech"] {
     --info-fg: #7fe3ff;
     --info-fg-muted: #58b0cc;
     --info-fg-soft: #3d8299;
+    --note-info-bg: #062033;     --note-info-border: #0e4a5e;     --note-info-fg: #7fe3ff;
+    --note-success-bg: #06281c;  --note-success-border: #0e5a40;  --note-success-fg: #5fffb8;
+    --note-warn-bg: #24200a;     --note-warn-border: #4a4410;     --note-warn-fg: #ffe66d;
+    --note-danger-bg: #240e16;   --note-danger-border: #4a1e2a;   --note-danger-fg: #ff8fa3;
     --border: #0e3a4a;
     --border-input: #0e3a4a;
     --border-card: #0e3a4a;
@@ -2235,6 +2253,62 @@ html[data-theme="tech"] table th {
     background-color: var(--bg-soft);
     border-bottom-color: var(--border-card);
 }
+
+/* ==================== Capacitor 移动端适配 ==================== */
+
+/* 安全区适配（刘海屏/打孔屏） */
+@supports (padding: env(safe-area-inset-top)) {
+    body.capacitor .mobile-topbar {
+        padding-top: env(safe-area-inset-top);
+    }
+}
+
+/* 扫码按钮 — 移动端顶栏 */
+.mobile-scan-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-size: 20px;
+    padding: 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    align-items: center;
+    justify-content: center;
+}
+body.capacitor .mobile-scan-btn { display: inline-flex; }
+
+/* 拍照按钮 — 资产新增表单 */
+.mobile-camera-btn {
+    display: none;
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    align-items: center;
+    gap: 6px;
+}
+body.capacitor .mobile-camera-btn { display: inline-flex; }
+
+/* 桌面专属功能隐藏 */
+body.capacitor .desktop-only { display: none !important; }
+
+/* 移动端触摸优化 */
+body.capacitor .menu-item,
+body.capacitor .btn,
+body.capacitor button {
+    min-height: 44px;
+}
+
+/* 移动端表格横向滚动 */
+body.capacitor .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
 html[data-theme="dark"] table th.sortable:hover,
 html[data-theme="black"] table th.sortable:hover,
 html[data-theme="tech"] table th.sortable:hover {
@@ -2478,3 +2552,117 @@ html[data-theme="tech"] ::-webkit-scrollbar-thumb:hover {
 .cs-changepwd-btn i {
     font-size: 14px;
 }
+
+/* ==================== 资产盘点模块 ==================== */
+
+.inv-session-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--gray-border);
+    border-radius: 8px;
+    transition: var(--transition-base);
+    cursor: pointer;
+}
+.inv-session-card:hover {
+    box-shadow: var(--card-shadow-hover);
+    border-color: var(--primary-color);
+}
+.inv-session-info {
+    flex: 1;
+    min-width: 0;
+}
+.inv-session-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 4px;
+}
+.inv-session-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* 批次/明细状态徽章 */
+.inv-status-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    margin-left: 8px;
+    font-weight: 500;
+}
+.inv-status-in_progress {
+    background: var(--bg-tag);
+    color: var(--brand);
+}
+.inv-status-completed {
+    background: rgba(82, 196, 26, 0.12);
+    color: var(--success-color);
+}
+
+/* 单条资产状态徽章 */
+.inv-item-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.inv-status-counted {
+    background: rgba(82, 196, 26, 0.12);
+    color: var(--success-color);
+}
+.inv-status-pending {
+    background: var(--bg-soft);
+    color: var(--text-secondary);
+}
+.inv-status-exception {
+    background: rgba(245, 34, 45, 0.12);
+    color: var(--danger-color);
+}
+
+/* 行底色: 已盘浅绿 / 异常浅红 */
+.inv-row-counted {
+    background: rgba(82, 196, 26, 0.04);
+}
+.inv-row-exception {
+    background: rgba(245, 34, 45, 0.04);
+}
+
+/* 盘点表格行 hover */
+#inv-items-tbody tr {
+    transition: background var(--transition-base);
+}
+#inv-items-tbody tr td {
+    padding: 8px;
+    border-bottom: 1px solid var(--gray-border-soft);
+    color: var(--text-color);
+}
+
+/* 扫码遮罩显示控制(默认隐藏，.active 时 flex 显示) */
+#inv-scan-overlay {
+    display: none;
+}
+#inv-scan-overlay.active {
+    display: flex;
+}
+
+/* 盘点页表格水平滚动(列较多) */
+#inventory-page .card > table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+#inventory-page .card > table thead,
+#inventory-page .card > table tbody {
+    display: table;
+    width: 100%;
+}
+

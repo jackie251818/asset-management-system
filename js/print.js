@@ -625,7 +625,19 @@ ${buildCardHTML('财务联')}
 </body>
 </html>`;
         
-        // 打开新窗口并写入 HTML
+        // 优先走 Electron 主进程原生打印子窗口(完全不经过浏览器)
+        // 浏览器模式(connApi 不存在) fallback 旧 window.open
+        if (window.connApi && typeof window.connApi.printCard === 'function') {
+            window.connApi.printCard(html).then((r) => {
+                if (r && !r.ok) {
+                    alert('打印卡片失败: ' + (r.error || '未知错误'));
+                }
+            }).catch((e) => {
+                alert('打印卡片异常: ' + e.message);
+            });
+            return;
+        }
+        // fallback: 浏览器直接打开(可能被拦截)
         const printWindow = window.open('', '_blank');
         if (!printWindow) {
             alert('无法打开打印窗口，请检查浏览器是否阻止了弹出窗口');

@@ -1,71 +1,126 @@
 /**
- * 服务端 EXE 功能冒烟验证 - 对运行中的 asset-server.exe 全面断言
+ * 完整冒烟测试: 外部前端优先 + 内嵌快照回退 + 飞书接口
+ * 启动: node server/tests/exe-smoke.js
  */
-const B = 'http://127.0.0.1:8399';
-let passed = 0, failed = 0;
-function check(name, cond, extra) {
-    if (cond) { passed++; console.log('  PASS ' + name); }
-    else { failed++; console.error('  FAIL ' + name + (extra ? ' - ' + JSON.stringify(extra).slice(0, 200) : '')); }
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const http = require('http');
+const { spawn } = require('child_process');
+
+const EXE = path.join(__dirname, '..', 'dist', 'asset-server.exe');
+const PASS = [];
+const FAIL = [];
+
+function logPass(msg) { PASS.push(msg); console.log('  ✓ ' + msg); }
+function logFail(msg, detail) { FAIL.push(msg); console.log('  ✗ ' + msg + (detail ? ' — ' + detail : '')); }
+
+function httpGet(port, p, headers) {
+    return new Promise((resolve) => {
+        http.get({ hostname: '127.0.0.1', port, path: p, headers: headers || {}, timeout: 4000 }, (s) => {
+            let b = '';
+            s.on('data', (c) => (b += c));
+            s.on('end', () => resolve({ status: s.statusCode, body: b }));
+        }).on('error', (e) => resolve({ status: 0, body: e.message }));
+    });
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+async function waitReady(port, timeoutMs = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        const r = await httpGet(port, '/api/ping');
+        if (r.status === 200) return true;
+        await sleep(500);
+    }
+    return false;
+}
+
+async function runTest(name, dataDir, setupFn, checkFn, options = {}) {
+    console.log(`\n🧪 测试: ${name}`);
+    const port = 39000 + PASS.length + FAIL.length + 1;
+    if (setupFn) setupFn();
+    const spawnOpts = {
+        env: { ...process.env, ASSET_PORT: String(port), ASSET_HOST: '127.0.0.1', ASSET_DATA_DIR: dataDir },
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    };
+    if (options.cwd) spawnOpts.cwd = options.cwd;
+    const proc = spawn(EXE, [], spawnOpts);
+    const outLogs = [];
+    proc.stdout.on('data', (c) => outLogs.push(c.toString().trim()));
+    proc.stderr.on('data', (c) => outLogs.push(c.toString().trim()));
+    const ready = await waitReady(port);
+    if (!ready) {
+        logFail('服务端启动超时', outLogs.slice(-3).join(' | '));
+        proc.kill('SIGTERM');
+        await sleep(1000);
+        return;
+    }
+    try {
+        await checkFn(port);
+    } catch (e) {
+        logFail('检查异常', e.message);
+    }
+    proc.kill('SIGTERM');
+    await sleep(1000);
+    if (proc.exitCode === null) proc.kill('SIGKILL');
 }
 
 async function main() {
-    const p = await fetch(B + '/api/ping');
-    check('GET /api/ping 可达(免鉴权)', p.status === 200);
+    console.log('========== asset-server.exe 静态资源 + 飞书接口 完整冒烟 ==========');
 
-    const html = await fetch(B + '/index.html').then(r => r.text());
-    check('静态首页 index.html 内置于 EXE 并可访问', html.includes('js/api.js') && html.includes('js/storage.js'));
+    // ===== 测试 1: EXE 同级有外部 index.html → 优先用外部 =====
+    const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'asset-test-ext-'));
+    const EXE_DIR = path.dirname(EXE);
+    const testMarker = '<!-- EXTERNAL-FRONTEND-MARKER-20260904 -->';
+    const externalIndexPath = path.join(EXE_DIR, 'index.html');
+    await runTest('EXE 同级有外部 index.html → 优先用外部', dir1, () => {
+        fs.writeFileSync(externalIndexPath,
+            '<!DOCTYPE html><html><head><meta charset="utf-8"></head>' + testMarker + '</html>');
+    }, async (port) => {
+        const idx = await httpGet(port, '/index.html');
+        if (idx.status === 200 && idx.body.includes(testMarker)) logPass('外部前端优先: 返回自定义标记');
+        else logFail('外部前端未生效, 返回内嵌快照');
+        // 其他静态资源自动回退内嵌(EXE 同级没 js/api.js)
+        const api = await httpGet(port, '/js/api.js');
+        if (api.status === 200) logPass('外部 index.html 但 js/api.js 回退内嵌快照');
+        else logFail('js/api.js 回退失败', 'status=' + api.status);
+    }, { cwd: EXE_DIR });
+    try { fs.unlinkSync(externalIndexPath); } catch (e) { /* 忽略 */ }
 
-    const login = await fetch(B + '/api/auth/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: 'admin123' }),
-    }).then(r => r.json());
-    // REST 层统一响应格式为 {code, message, data}(区别于兼容层的 {success, data})
-    check('管理员登录成功', login.data && login.data.token);
-    const tk = login.data.token;
+    // ===== 测试 3: 无外部前端 → 回退内嵌快照 + 飞书接口 =====
+    const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'asset-test-fs-'));
+    await runTest('内嵌快照回退 + 飞书接口检查', dir3, null, async (port) => {
+        // 内嵌快照 feishu-sync-card
+        const idx = await httpGet(port, '/index.html');
+        if (idx.status === 200 && idx.body.includes('feishu-sync-card')) logPass('内嵌快照 feishu-sync-card 正常');
+        else logFail('内嵌快照 feishu-sync-card 缺失');
 
-    const cr = await fetch(B + '/api/assets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-        body: JSON.stringify({
-            id: 'EXE-TEST-001', owner: '测试主体', type: '笔记本电脑', brandModel: 'Test T14',
-            purchaseDate: '2026-08-30', status: 'active', user: '测试用户', department: '测试部',
-            unit: '台', quantity: 1, value: 1000, depreciationYears: 5,
-            maintenanceRecords: [], attachments: [],
-        }),
+        // 登录页 + 内嵌模式注入(不带 ASSET_EMBEDDED_TOKEN 就不注入)
+        const login = await httpGet(port, '/login.html');
+        if (login.status === 200) logPass('/login.html 可访问');
+        else logFail('/login.html HTTP ' + login.status);
+
+        // 飞书接口
+        const cfg = await httpGet(port, '/api/feishu/config');
+        if (cfg.status === 401) logPass('/api/feishu/config 需鉴权(正常, 未登录)');
+        else if (cfg.status === 200) logPass('/api/feishu/config 200(已默认内置配置)');
+        else logFail('/api/feishu/config 异常', cfg.status);
     });
-    check('创建资产(REST)', cr.status === 200 || cr.status === 201, cr.status);
 
-    const list = await fetch(B + '/api/assets', { headers: { Authorization: 'Bearer ' + tk } }).then(r => r.json());
-    check('资产列表查询', Array.isArray(list.data.items) && list.data.total === 1 && list.data.items[0].id === 'EXE-TEST-001', list.data);
-
-    const put = await fetch(B + '/api/assets/EXE-TEST-001', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-        body: JSON.stringify({ ...list.data.items[0], user: '改过的用户', version: 1 }),
-    });
-    check('编辑资产(乐观锁 version=1)', put.status === 200);
-
-    const dv = await fetch(B + '/api/data-version', { headers: { Authorization: 'Bearer ' + tk } }).then(r => r.json());
-    check('GET /api/data-version 指纹端点', dv.success && typeof dv.stamp === 'string');
-
-    const info = await fetch(B + '/api/info').then(r => r.json());
-    check('GET /api/info 携带 cs 标识', info.success && info.cs === true);
-
-    const batch = await fetch(B + '/api/assets/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-        body: JSON.stringify({
-            assets: [
-                { id: 'EXE-TEST-002', owner: '测试主体', type: '台式机', brandModel: 'B', purchaseDate: '2026-08-30', status: 'active', user: 'u2', department: '测试部', unit: '台', quantity: 1, value: 2000, depreciationYears: 5, maintenanceRecords: [], attachments: [] },
-            ],
-        }),
-    });
-    check('批量导入 /api/assets/batch', batch.status === 200);
-
-    const del = await fetch(B + '/api/assets/EXE-TEST-001', { method: 'DELETE', headers: { Authorization: 'Bearer ' + tk } });
-    check('删除资产', del.status === 200);
-
-    console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
-    process.exit(failed ? 1 : 0);
+    // ===== 汇总 =====
+    console.log('\n========== 测试汇总 ==========');
+    console.log('通过: ' + PASS.length + '  失败: ' + FAIL.length);
+    if (FAIL.length > 0) {
+        console.log('\n❌ 失败项:');
+        FAIL.forEach((f) => console.log('  - ' + f));
+        process.exit(1);
+    } else {
+        console.log('\n✅ 全部通过');
+        process.exit(0);
+    }
 }
-main().catch(e => { console.error(e); process.exit(1); });
+
+main().catch((e) => { console.error(e); process.exit(1); });

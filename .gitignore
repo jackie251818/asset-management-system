@@ -5,10 +5,20 @@ server/node_modules/
 # 构建产物
 dist/
 dist_build_*/
+dist_test*/
 server/dist/
 build/out/
 build-info.json
 tests/smoke.test.*.log
+
+# APK / AAB（发布包走 GitHub Releases，不入 git；含旧 Capacitor 残留包）
+*.apk
+*.aab
+
+# 服务端零散测试数据库（正式库在 server/data/ 已忽略）
+server/assets.db
+server/*.db-shm
+server/*.db-wal
 
 # 打包产物 / 临时大文件
 *.tar

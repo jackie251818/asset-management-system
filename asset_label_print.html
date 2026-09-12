@@ -209,7 +209,7 @@
 
         /* 右侧二维码区 */
         .label-qrcode {
-            width: 24mm;
+            width: 26mm;
             padding: 1mm;
             display: flex;
             flex-direction: column;
@@ -219,8 +219,8 @@
         }
 
         .qrcode-wrapper {
-            width: 20mm;
-            height: 20mm;
+            width: 22mm;
+            height: 22mm;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -360,12 +360,12 @@
 
             /* 二维码打印优化 */
             .label-qrcode {
-                width: 24mm !important;
+                width: 26mm !important;
             }
 
             .qrcode-wrapper {
-                width: 20mm !important;
-                height: 20mm !important;
+                width: 22mm !important;
+                height: 22mm !important;
                 background: #fff !important;
             }
 
@@ -450,7 +450,7 @@
             if (header && !header.querySelector('.server-url-tip')) {
                 const tip = document.createElement('div');
                 tip.className = 'server-url-tip';
-                tip.innerHTML = '📋 二维码已内嵌资产信息，扫码即可查看详情';
+                tip.innerHTML = '📋 二维码已内嵌资产信息（微信扫码后可复制文本查看）';
                 header.appendChild(tip);
             }
 
@@ -538,10 +538,10 @@
 
             const companyName = asset.owner || '尚毅集团';
             const assetName = asset.type || '-';
-            const configModel = asset.configuration || '-';
+            const brandModel = asset.brandModel || asset.brand_model || '-';
             const assetCode = asset.id || '-';
             const orgName = asset.owner || '-';
-            const responsible = asset.user || '-';
+            const responsible = asset.manager || asset.user || '-';
             const location = asset.location || '-';
 
             card.innerHTML = `
@@ -555,7 +555,7 @@
                         </div>
                         <div class="label-info-row">
                             <span class="label-info-label">规格型号:</span>
-                            <span class="label-info-value" title="${escapeHtml(configModel)}">${escapeHtml(configModel)}</span>
+                            <span class="label-info-value" title="${escapeHtml(brandModel)}">${escapeHtml(brandModel)}</span>
                         </div>
                         <div class="label-info-row">
                             <span class="label-info-label">资产编码:</span>
@@ -619,14 +619,15 @@
         function createAssetText(asset) {
             return '资产信息\n' +
                 '名称：' + (asset.type || '-') + '\n' +
-                '型号：' + (asset.configuration || '-') + '\n' +
+                '型号：' + (asset.brandModel || asset.brand_model || '-') + '\n' +
                 '编码：' + (asset.id || '-') + '\n' +
                 '机构：' + (asset.owner || '-') + '\n' +
-                '责任人：' + (asset.user || '-') + '\n' +
+                '责任人：' + (asset.manager || asset.user || '-') + '\n' +
                 '地点：' + (asset.location || '-');
         }
 
         // 生成资产二维码：用纯文本存储资产信息，扫码器直接显示可读内容
+        // （微信政策限制：纯文本仅提供"复制文本内容"按钮，不直接展示）
         function generateAssetQR(asset, container) {
             if (!container) return;
             container.innerHTML = '';
@@ -642,8 +643,9 @@
             // 正确的 UTF-8 编码（已修复 stringToBytes 不能正确编码中文的问题）
             const bytes = stringToUtf8Bytes(text);
 
-            // 使用 H 级纠错 (30%) 提高扫码成功率
-            const qr = qrcode(0, 'H');
+            // 使用 M 级纠错 (15%)：H 级会使版本膨胀到 V15（77 模块），20mm 标签上每模块仅 0.26mm，
+            // 微信等高要求扫码器无法识别；M 级降至 V11（61 模块），密度降 37%，各类扫码器兼容
+            const qr = qrcode(0, 'M');
             qr.addData(bytes, 'Byte');
             qr.make();
 

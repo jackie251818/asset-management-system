@@ -709,8 +709,8 @@ function updateFileSyncStatus() {
 
     if (storageManager.fileApiReady) {
         // 服务器模式 — 不需要连接/断开按钮（已自动保存）
-        statusBox.style.background = '#e6f7ff';
-        statusBox.style.borderColor = '#91d5ff';
+        statusBox.style.background = 'var(--note-info-bg)';
+        statusBox.style.borderColor = 'var(--note-info-border)';
         // 区分单机(内嵌服务)与 C/S 服务器模式, 文案分别表述
         const isEmbedded = typeof ApiClient !== 'undefined' && ApiClient.embeddedMode === true;
         statusElement.innerHTML = isEmbedded
@@ -720,22 +720,22 @@ function updateFileSyncStatus() {
         if (disconnectBtn) disconnectBtn.style.display = 'none';
     } else if (storageManager.isFileSyncEnabled && storageManager.dataDirHandle) {
         // 本地模式 + 文件同步已启用 — 隐藏连接按钮，显示断开按钮
-        statusBox.style.background = '#f6ffed';
-        statusBox.style.borderColor = '#b7eb8f';
+        statusBox.style.background = 'var(--note-success-bg)';
+        statusBox.style.borderColor = 'var(--note-success-border)';
         statusElement.innerHTML = '✅ <strong>文件同步已启用</strong>：数据会自动保存到 data/*.js 文件，下次打开时自动加载最新数据。';
         if (connectBtn) connectBtn.style.display = 'none';
         if (disconnectBtn) disconnectBtn.style.display = '';
     } else if ('showDirectoryPicker' in window) {
         // 本地模式 + 浏览器支持但未连接 — 显示连接按钮供用户手动触发
-        statusBox.style.background = '#e6f7ff';
-        statusBox.style.borderColor = '#91d5ff';
+        statusBox.style.background = 'var(--note-info-bg)';
+        statusBox.style.borderColor = 'var(--note-info-border)';
         statusElement.innerHTML = '⏳ <strong>文件同步未启用</strong>：点击上方"连接数据文件夹"按钮或此处的"连接"按钮启用文件同步，启用后数据将自动保存到 data/*.js 文件。<br>当前协议: ' + window.location.protocol + '，数据来源: ' + (typeof window.__LOCAL_DATA__ !== 'undefined' ? 'data/*.js 已加载' : 'IndexedDB/localStorage');
         if (connectBtn) connectBtn.style.display = '';
         if (disconnectBtn) disconnectBtn.style.display = 'none';
     } else {
         // 本地模式 + 浏览器不支持 — 两个按钮都不显示
-        statusBox.style.background = '#fff1f0';
-        statusBox.style.borderColor = '#ffa39e';
+        statusBox.style.background = 'var(--note-danger-bg)';
+        statusBox.style.borderColor = 'var(--note-danger-border)';
         statusElement.innerHTML = '❌ <strong>浏览器不支持文件同步</strong>：请使用"下载数据文件"按钮手动保存数据到 data/*.js 文件。<br>建议使用 Chrome 86+ 或 Edge 86+ 浏览器以获得最佳体验。';
         if (connectBtn) connectBtn.style.display = 'none';
         if (disconnectBtn) disconnectBtn.style.display = 'none';
@@ -832,9 +832,9 @@ function showSyncToast(message, type = 'info') {
     if (existing) existing.remove();
 
     const colors = {
-        success: { bg: '#f6ffed', border: '#b7eb8f', text: '#389e0d', icon: 'fa-check-circle' },
-        info:    { bg: '#e6f7ff', border: '#91d5ff', text: '#096dd9', icon: 'fa-info-circle' },
-        error:   { bg: '#fff2f0', border: '#ffccc7', text: '#cf1322', icon: 'fa-exclamation-circle' }
+        success: { bg: 'var(--note-success-bg)', border: 'var(--note-success-border)', text: 'var(--note-success-fg)', icon: 'fa-check-circle' },
+        info:    { bg: 'var(--note-info-bg)',    border: 'var(--note-info-border)',    text: 'var(--note-info-fg)',    icon: 'fa-info-circle' },
+        error:   { bg: 'var(--note-danger-bg)',  border: 'var(--note-danger-border)',  text: 'var(--note-danger-fg)',  icon: 'fa-exclamation-circle' }
     };
     const c = colors[type] || colors.info;
 

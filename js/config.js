@@ -53,7 +53,10 @@ const STORAGE_KEYS = {
     CUSTOM_OPTIONS_DEPARTMENT: 'custom_options_department',
     CUSTOM_OPTIONS_OWNER_DELETED: 'custom_options_owner_deleted',
     CUSTOM_OPTIONS_TYPE_DELETED: 'custom_options_type_deleted',
-    CUSTOM_OPTIONS_DEPARTMENT_DELETED: 'custom_options_department_deleted'
+    CUSTOM_OPTIONS_DEPARTMENT_DELETED: 'custom_options_department_deleted',
+    // 盘点模块
+    INVENTORY_SESSIONS: 'inventory_sessions',
+    INVENTORY_SESSION_ITEM: 'inventory_session_'    // 前缀，实际 key 拼接批次 ID
 }
 
 // 核心运行时状态变量（从 script.js 迁移，供 js/ 各模块共享）

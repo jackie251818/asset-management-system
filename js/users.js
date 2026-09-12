@@ -17,14 +17,14 @@
         if (!tbody) return;
         if (typeof ApiClient === 'undefined' || !ApiClient.csMode || !ApiClient.user) return;
         if (ApiClient.user.role !== 'admin') {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px;">仅管理员可管理用户</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray-dark);padding:20px;">仅管理员可管理用户</td></tr>';
             return;
         }
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px;">加载中...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray-dark);padding:20px;">加载中...</td></tr>';
         try {
             const users = await ApiClient.getUsers();
             if (!Array.isArray(users) || users.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px;">暂无用户</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray-dark);padding:20px;">暂无用户</td></tr>';
                 return;
             }
             const currentId = ApiClient.user.id;
@@ -32,14 +32,14 @@
                 const roleLabel = ApiClient.getRoleLabel(u.role);
                 const isSelf = u.id === currentId;
                 const created = u.created_at ? String(u.created_at).replace('T', ' ').replace(/\.\d+.*$/, '') : '-';
-                return '<tr style="border-bottom:1px solid #f3f4f6;">'
-                    + '<td style="padding:10px 14px;">' + escapeHtml(u.username) + (isSelf ? ' <span style="color:#10b981;font-size:12px;">(我)</span>' : '') + '</td>'
-                    + '<td style="padding:10px 14px;"><span style="padding:2px 8px;border-radius:10px;font-size:12px;background:' + (u.role === 'admin' ? '#dbeafe;color:#1d4ed8' : '#f3f4f6;color:#6b7280') + ';">' + roleLabel + '</span></td>'
-                    + '<td style="padding:10px 14px;color:#6b7280;font-size:13px;">' + created + '</td>'
+                return '<tr style="border-bottom:1px solid var(--gray-border);">'
+                    + '<td style="padding:10px 14px;">' + escapeHtml(u.username) + (isSelf ? ' <span style="color:var(--success-color);font-size:12px;">(我)</span>' : '') + '</td>'
+                    + '<td style="padding:10px 14px;"><span style="padding:2px 8px;border-radius:10px;font-size:12px;background:' + (u.role === 'admin' ? 'var(--bg-tag);color:var(--brand)' : 'var(--bg-soft);color:var(--text-secondary)') + ';">' + roleLabel + '</span></td>'
+                    + '<td style="padding:10px 14px;color:var(--text-secondary);font-size:13px;">' + created + '</td>'
                     + '<td style="padding:10px 14px;text-align:right;white-space:nowrap;">'
                     + (isSelf ? '' : '<button class="btn btn-secondary user-reset-btn" data-id="' + u.id + '" data-name="' + escapeHtml(u.username) + '" style="padding:4px 10px;margin-right:6px;font-size:12px;"><i class="fas fa-key"></i> 重置密码</button>')
                     + (isSelf ? '' : '<button class="btn btn-danger user-delete-btn" data-id="' + u.id + '" data-name="' + escapeHtml(u.username) + '" style="padding:4px 10px;font-size:12px;"><i class="fas fa-trash"></i> 删除</button>')
-                    + (isSelf ? '<span style="color:#9ca3af;font-size:12px;">当前账号</span>' : '')
+                    + (isSelf ? '<span style="color:var(--gray-dark);font-size:12px;">当前账号</span>' : '')
                     + '</td>'
                     + '</tr>';
             }).join('');
@@ -68,7 +68,7 @@
                 });
             });
         } catch (err) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#ef4444;padding:20px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--danger-color);padding:20px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
         }
         // 同页的操作日志卡片(admin)一并刷新
         renderAuditLog(1);
@@ -144,7 +144,7 @@
         }
         card.style.display = 'block';
         _auditPage = page || _auditPage || 1;
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px;">加载中...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-dark);padding:16px;">加载中...</td></tr>';
         try {
             const action = document.getElementById('audit-filter').value;
             const username = (document.getElementById('audit-username').value || '').trim();
@@ -153,7 +153,7 @@
             document.getElementById('audit-total').textContent = '共 ' + r.total + ' 条';
             document.getElementById('audit-pageinfo').textContent = r.total ? (r.page + ' / ' + Math.max(1, Math.ceil(r.total / r.pageSize))) : '-';
             if (!items.length) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px;">暂无日志</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-dark);padding:16px;">暂无日志</td></tr>';
                 return;
             }
             tbody.innerHTML = items.map(function (it) {
@@ -161,19 +161,19 @@
                 const user = escapeHtml(it.username || '—');
                 const act = auditLabel(it.action);
                 const isFail = it.action === 'auth.login_failed';
-                const actColor = isFail ? '#ef4444' : (/^user\./.test(it.action) ? '#7c3aed' : (/^asset\./.test(it.action) ? '#2563eb' : '#059669'));
+                const actColor = isFail ? 'var(--danger-color)' : (/^user\./.test(it.action) ? '#7c3aed' : (/^asset\./.test(it.action) ? 'var(--brand)' : 'var(--success-color)'));
                 const target = escapeHtml(it.target || '—');
                 const detail = escapeHtml(it.detail || '');
-                return '<tr style="border-bottom:1px solid #f3f4f6;">'
-                    + '<td style="padding:7px 12px;white-space:nowrap;color:#6b7280;">' + escapeHtml(time) + '</td>'
+                return '<tr style="border-bottom:1px solid var(--gray-border);">'
+                    + '<td style="padding:7px 12px;white-space:nowrap;color:var(--text-secondary);">' + escapeHtml(time) + '</td>'
                     + '<td style="padding:7px 12px;white-space:nowrap;font-weight:500;">' + user + '</td>'
                     + '<td style="padding:7px 12px;white-space:nowrap;color:' + actColor + ';font-weight:500;">' + escapeHtml(act) + '</td>'
                     + '<td style="padding:7px 12px;white-space:nowrap;">' + target + '</td>'
-                    + '<td style="padding:7px 12px;color:#9ca3af;">' + detail + '</td>'
+                    + '<td style="padding:7px 12px;color:var(--gray-dark);">' + detail + '</td>'
                     + '</tr>';
             }).join('');
         } catch (err) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#ef4444;padding:16px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--danger-color);padding:16px;">加载失败: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
         }
     }
 
@@ -189,7 +189,7 @@
         if (!modal) return;
         _resetPwdTargetId = userId;
         const targetEl = document.getElementById('reset-pwd-target');
-        if (targetEl) targetEl.innerHTML = '正在为 <b style="color:#1f2937;">' + escapeHtml(username) + '</b> 重置密码';
+        if (targetEl) targetEl.innerHTML = '正在为 <b style="color:var(--text-color);">' + escapeHtml(username) + '</b> 重置密码';
         document.getElementById('reset-pwd-new').value = '';
         document.getElementById('reset-pwd-confirm').value = '';
         const err = document.getElementById('reset-pwd-error');
@@ -393,9 +393,16 @@
         if (!el) return;
         el.style.display = 'block';
         el.textContent = text;
-        el.style.background = type === 'ok' ? '#ecfdf5' : (type === 'err' ? '#fef2f2' : '#fffbeb');
-        el.style.border = '1px solid ' + (type === 'ok' ? '#10b981' : (type === 'err' ? '#ef4444' : '#f59e0b'));
-        el.style.color = type === 'ok' ? '#065f46' : (type === 'err' ? '#991b1b' : '#92400e');
+        // 用语义化 CSS 变量, 深色主题自动反色
+        const map = {
+            ok:  ['var(--note-success-bg)', 'var(--note-success-border)', 'var(--note-success-fg)'],
+            err: ['var(--note-danger-bg)',  'var(--note-danger-border)',  'var(--note-danger-fg)'],
+            warn:['var(--note-warn-bg)',    'var(--note-warn-border)',    'var(--note-warn-fg)']
+        };
+        const [bg, bd, fg] = map[type] || map.warn;
+        el.style.background = bg;
+        el.style.border = '1px solid ' + bd;
+        el.style.color = fg;
     }
 
     function handleSync(dir) {

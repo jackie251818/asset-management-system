@@ -30,7 +30,10 @@
             /** 本地 → 服务端: 读取本地 data/ 目录推送到服务端(全量替换,需登录)
              *  payload: { url, username, password }
              *  returns: { ok, pushed:{ key:count }, errors:[], totalAssets, serverInfo:{ name, version } } */
-            syncPush: (payload) => ipcRenderer.invoke('conn:syncPush', payload)
+            syncPush: (payload) => ipcRenderer.invoke('conn:syncPush', payload),
+            /** 打印资产登记卡: 主进程开 Electron 子窗口 → 系统原生打印对话框 → 关闭
+             *  payload: { html: 完整 HTML 字符串(含内联 CSS) } */
+            printCard: (html) => ipcRenderer.invoke('printCard', html)
         });
         console.log('[conn-preload] connApi 注入成功');
     } catch (e) {

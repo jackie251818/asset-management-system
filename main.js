@@ -16,6 +16,15 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
+const { spawn } = require('child_process');
+
+/** 主进程调试日志 — 写到文件便于 EXE 内嵌时查看 */
+const MAIN_LOG = process.env.MAIN_LOG_PATH || require('os').tmpdir() + '/asset-main.log';
+try { fs.writeFileSync(MAIN_LOG, '=== main process started ' + new Date().toISOString() + ' ===\n', 'utf8'); } catch(_) {}
+function mainLog(msg) {
+    try { fs.appendFileSync(MAIN_LOG, '[' + new Date().toISOString().slice(11,23) + '] ' + msg + '\n', 'utf8'); } catch(_) {}
+}
 
 // 应用资源目录(打包后位于 asar 内,开发时为 __dirname)
 const APP_DIR = __dirname;
@@ -941,6 +950,211 @@ function startServer(publicDir, dataDir) {
 let mainWindow = null;
 // HTTP 服务器引用,退出时优雅关闭,避免最后的写入被截断
 let httpServer = null;
+// 内置完整服务端(asset-server.exe)子进程引用: 单机模式优先拉起, 含飞书同步等全部服务端能力
+let embeddedServerProc = null;
+
+/**
+ * ============ 打印预览窗口(不走浏览器) ============
+ * 调用: openPrintWindow(url)  — 标签打印(loadURL)
+ *       openPrintWindow({ html, title }) — 登记卡打印(data URL)
+ * 行为: 创建 Electron 子窗口 → 注入顶部悬浮 toolbar
+ *        用户点工具栏「🖨 打印」或按 Ctrl+P → 触发 window.print()
+ *        Chromium 会弹打印对话框(带预览), 选好打印机才真的打印
+ *        避免旧版 window.open 被 setWindowOpenHandler 拦截 → 浏览器弹窗
+ */
+
+/** 在 HTML 里注入统一打印工具栏: 放到 </head> 之前; 同时清除原 HTML 里可能存在的自动 window.print() */
+function injectPrintToolbar(html, opts) {
+    const title = (opts && opts.title) || '';
+    // 清除原 HTML 中"自动触发 window.print"的 onload 脚本(登记卡默认模板里有)
+    let cleanHtml = html.replace(/<script[^>]*>[\s\S]*?(?:window\.print|onload[\s\S]{0,50}print)[\s\S]*?<\/script>/gi,
+        '<!-- auto-print removed: use toolbar instead -->');
+    const toolbarScript = `
+<style>
+    #__asset_print_toolbar {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
+        background: rgba(37,99,235,.95); color: #fff;
+        padding: 10px 16px; display: flex; align-items: center; justify-content: space-between;
+        font-family: -apple-system,Segoe UI,Microsoft YaHei,sans-serif; font-size: 14px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    }
+    #__asset_print_toolbar button {
+        border: 0; border-radius: 4px; padding: 6px 14px; cursor: pointer;
+        font-weight: 600; font-size: 13px; margin-left: 8px;
+    }
+    #__asset_print_toolbar .btn-print { background: #fff; color: #2563eb; }
+    #__asset_print_toolbar .btn-close {
+        background: transparent; color: #fff;
+        border: 1px solid rgba(255,255,255,.6);
+    }
+    @media print {
+        #__asset_print_toolbar { display: none !important; }
+        html { padding-top: 0 !important; }
+    }
+    html { padding-top: 52px; }
+</style>
+<div id="__asset_print_toolbar">
+    <div>👀 打印预览${title ? ' — ' + title : ''}</div>
+    <div>
+        <button class="btn-print" onclick="window.print()">🖨 打印</button>
+        <button class="btn-close" onclick="window.close()">关闭</button>
+    </div>
+</div>
+<script>
+    // Ctrl+P 也走 window.print()
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+            e.preventDefault(); window.print();
+        }
+        if (e.key === 'Escape') { window.close(); }
+    });
+</script>`;
+    // 插到 </head> 之前; 若无 head, 插到 body 开头
+    let out = cleanHtml;
+    const headIdx = out.lastIndexOf('</head>');
+    if (headIdx >= 0) {
+        out = out.slice(0, headIdx) + toolbarScript + out.slice(headIdx);
+    } else {
+        const bodyMatch = out.match(/<body[^>]*>/i);
+        if (bodyMatch) {
+            const insertAt = bodyMatch.index + bodyMatch[0].length;
+            out = out.slice(0, insertAt) + toolbarScript + out.slice(insertAt);
+        } else {
+            out = toolbarScript + out;
+        }
+    }
+    return out;
+}
+
+function openPrintWindow(target) {
+    // 识别: {html,title} 对象 → data URL; 纯字符串 → URL
+    let url, html = null, title = '';
+    if (target && typeof target === 'object' && target.html) {
+        html = target.html;
+        title = target.title || '';
+    } else if (typeof target === 'string') {
+        url = target;
+    } else {
+        return { ok: false, error: 'invalid target' };
+    }
+
+    try {
+        const isCard = !!html; // 登记卡(HTML字符串) vs 标签(URL)
+        const printWin = new BrowserWindow({
+            width: isCard ? 820 : 500,
+            height: isCard ? 1100 : 720,
+            autoHideMenuBar: true,
+            title: isCard ? '资产登记卡打印预览' : '资产标签打印预览',
+            backgroundColor: '#ffffff',
+            webPreferences: { sandbox: false }
+        });
+        printWin.setMenuBarVisibility(false);
+        printWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        printWin.on('closed', () => {});
+        printWin.webContents.on('did-fail-load', (ev, code, desc) => {
+            console.error('[print] 预览加载失败:', code, desc);
+            if (!printWin.isDestroyed()) printWin.close();
+        });
+
+        if (isCard) {
+            // 登记卡: 注入 toolbar → data URL
+            const withToolbar = injectPrintToolbar(html, { title });
+            printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(withToolbar));
+        } else {
+            // 标签: loadURL 后 executeJavaScript 动态注入 toolbar
+            printWin.webContents.once('did-finish-load', () => {
+                printWin.webContents.executeJavaScript(`
+                    (function(){
+                        if (document.getElementById('__asset_print_toolbar')) return;
+                        const toolbarHtml = ${JSON.stringify(injectPrintToolbar('<div id="__toolbar_marker"></div>', {}))}
+                            .replace('<div id="__toolbar_marker"></div>', '');
+                        // 移除原来页面里可能存在的自动 print onload
+                        const scripts = document.querySelectorAll('script');
+                        scripts.forEach(function(s){ if (s.textContent && s.textContent.includes('window.print')) { s.textContent=''; } });
+                        // 注入 toolbar
+                        const div = document.createElement('div');
+                        div.innerHTML = toolbarHtml;
+                        while (div.firstChild) document.body.insertBefore(div.firstChild, document.body.firstChild);
+                    })();
+                `).catch((e) => console.warn('[print] inject toolbar failed:', e.message));
+            });
+            printWin.loadURL(url);
+        }
+        printWin.show();
+        return { ok: true };
+    } catch (e) {
+        console.error('[print] openPrintWindow 异常:', e.message);
+        return { ok: false, error: e.message };
+    }
+}
+
+/** 判断 URL 是否为需要在系统浏览器打开的真正外站 */
+function isExternalUrl(url) {
+    if (!url || url.startsWith('file://') || url.startsWith('data:')) return false;
+    return url.startsWith('http://') || url.startsWith('https://');
+}
+
+/**
+ * 兜底: 旧版前端 window.open('', '_blank') — 主进程监听 browser-window-created,
+ * 等到 Chromium 开的新窗口 DOM 稳定(前端 document.write 完成) → 抓 HTML →
+ * 关窗口 → 交给 openPrintWindow 预览. 不依赖服务器前端更新
+ *
+ * 用法: setWindowOpenHandler 里对空 URL return { action: 'allow' };
+ *       然后 call bindPrintPopupCapture() 启动 capture 监听.
+ */
+function bindPrintPopupCapture() {
+    let captured = false;
+    app.on('browser-window-created', (event, newWin) => {
+        const winTitle = newWin.getTitle();
+        const winUrl = newWin.webContents.getURL();
+        mainLog('[print] browser-window-created fired, title=' + JSON.stringify(winTitle) + ' url=' + JSON.stringify(winUrl) + ' captured=' + captured + ' isMain=' + (newWin === mainWindow));
+        if (captured) return;
+        if (newWin === mainWindow) return;
+        if (winTitle || (winUrl && !/about:blank/.test(winUrl))) { mainLog('[print] skip non-print window'); return; }
+        captured = true;
+        mainLog('[print] confirmed print popup - will capture HTML');
+
+        const wc = newWin.webContents;
+        const tryCapture = async () => {
+            try {
+                let last = '', stableCount = 0;
+                for (let i = 0; i < 80; i++) {
+                    await new Promise(r => setTimeout(r, 50));
+                    const h = await wc.executeJavaScript(
+                        `(document.body && document.body.innerHTML || '').length > 10 ? document.documentElement.outerHTML : ''`
+                    ).catch(() => '');
+                    if (h.length < 10) continue;
+                    if (h === last) { stableCount++; if (stableCount >= 2) { last = h; break; } }
+                    else { stableCount = 0; last = h; }
+                }
+                mainLog('[print] captured HTML length=' + last.length + ' hasCard=' + last.includes('行政联|财务联|打印预览') + ' snippet=' + JSON.stringify(last.slice(0, 80)));
+                if (!last) { mainLog('[print] 没抓到 HTML'); return; }
+                if (!newWin.isDestroyed()) { try { newWin.destroy(); } catch(_){} }
+                mainLog('[print] calling openPrintWindow...');
+                openPrintWindow({ html: last, title: '资产登记卡' });
+            } catch (e) {
+                mainLog('[print] capture 异常:' + e.message);
+            }
+        };
+
+        wc.on('did-finish-load', tryCapture);
+        setTimeout(() => {
+            if (captured && !newWin.isDestroyed()) {
+                mainLog('[print] 4s timeout - tryCapture again');
+                tryCapture();
+                setTimeout(() => { if (!newWin.isDestroyed()) newWin.destroy(); }, 500);
+            }
+        }, 4000);
+    });
+}
+
+/** 注册全局 browser-window-created 监听(只注册一次, 在 app.whenReady 后调用) */
+function ensurePrintCaptureBound() {
+    // 幂等: 用一个标记避免重复注册
+    if (global.__printCaptureBound) return;
+    global.__printCaptureBound = true;
+    bindPrintPopupCapture();
+}
 
 /** 客户端模式失败兜底:本次启动强制单机(不改动任何已保存设置) */
 let forceStandaloneOnce = false;
@@ -1157,6 +1371,21 @@ function registerConnectionIpc() {
         app.relaunch();
         app.quit();
         return { ok: true };
+    });
+
+    // ============ 资产登记卡原生打印(不走浏览器) ============
+    ipcMain.handle('printCard', (_e, html) => {
+        try {
+            mainLog('[print] printCard IPC called, html len=' + (html ? html.length : 0));
+            if (typeof html !== 'string' || !html.trim()) return { ok: false, error: 'empty html' };
+            const result = openPrintWindow({ html: html, title: '资产登记卡' });
+            mainLog('[print] openPrintWindow result = ' + JSON.stringify(result));
+            if (!result || !result.ok) return { ok: false, error: result && result.error || 'open fail' };
+            return { ok: true };
+        } catch (err) {
+            mainLog('[print] printCard 异常:' + err.message);
+            return { ok: false, error: err.message };
+        }
     });
 
     // ============ 服务端信息 + 数据同步 ============
@@ -1400,7 +1629,7 @@ function probeClientServer(serverUrl) {
             } else if (!staticOk) {
                 // API 正常但静态文件 404 —— 前端未部署
                 error = '远程 API 正常，但前端页面返回 HTTP ' + staticCode;
-                hint = '常见原因: 服务端源码部署时只上传了 server/ 目录, 前端文件(index.html、login.html、js/、libs/、styles.css)未部署到 ' + target + ' 的上一级目录。\n临时修复: 将项目根目录的 index.html / login.html / styles.css / final_chart_fix.js / js/ / libs/ / asset_label_print.html 上传到服务器的项目根目录(与 server/ 平级)。\n长期方案: 用 pkg 打包成 asset-server.exe, 前端文件会自动内嵌。';
+                hint = '常见原因: 服务端源码部署时只上传了 server/ 目录, 前端文件(index.html、login.html、js/、libs/、styles.css)未部署到 ' + target + ' 的上一级目录。\n临时修复: 将项目根目录的 index.html / login.html / styles.css / js/ / libs/ / asset_label_print.html 上传到服务器的项目根目录(与 server/ 平级)。\n长期方案: 用 pkg 打包成 asset-server.exe, 前端文件会自动内嵌。';
             }
             resolve({ ok, apiOk, staticOk, error, hint });
         });
@@ -1437,11 +1666,12 @@ async function createClientWindow(serverConfig) {
         }
     });
 
-    // 外部链接在系统默认浏览器中打开
+    // 外部链接在系统默认浏览器中打开(本地打印页走 Electron 预览窗口)
+    ensurePrintCaptureBound();
     mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-        if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
-            shell.openExternal(targetUrl);
-        }
+        if (/asset_label_print\.html/i.test(targetUrl)) { openPrintWindow(targetUrl); return { action: 'deny' }; }
+        if (!targetUrl || targetUrl === 'about:blank') { return { action: 'allow' }; } // 给 capture 逻辑处理
+        if (isExternalUrl(targetUrl)) shell.openExternal(targetUrl);
         return { action: 'deny' };
     });
 
@@ -1559,7 +1789,131 @@ async function createWindow() {
 }
 
 /**
- * 单机模式:内嵌 HTTP 服务器 + 本地数据目录(原有行为)
+ * ============ 内置完整服务端(asset-server.exe) ============
+ * 单机模式优先拉起打包在 resources/ 内的完整服务端(含飞书双向同步/多表/用户体系等),
+ * 以 127.0.0.1 + 随机端口 + 一次性 token 的"内嵌免密模式"运行;
+ * 找不到 EXE 或启动失败时回退到旧的内嵌精简服务器(JSON 数据, 无飞书)。
+ */
+
+/** 定位内置 asset-server.exe: 打包后在 resources/, 开发时在 server/dist/ */
+function locateBundledServer() {
+    const candidates = [];
+    if (app.isPackaged && process.resourcesPath) {
+        candidates.push(path.join(process.resourcesPath, 'asset-server.exe'));
+    }
+    candidates.push(path.join(APP_DIR, 'server', 'dist', 'asset-server.exe'));
+    return candidates.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
+}
+
+/** 申请一个空闲端口 */
+function getFreePort() {
+    return new Promise((resolve, reject) => {
+        const srv = net.createServer();
+        srv.unref();
+        srv.on('error', reject);
+        srv.listen(0, '127.0.0.1', () => {
+            const port = srv.address().port;
+            srv.close(() => resolve(port));
+        });
+    });
+}
+
+/** 探测服务端就绪(/api/ping) */
+function waitForServerReady(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve, reject) => {
+        const tick = () => {
+            const req = http.get({
+                hostname: '127.0.0.1', port, path: '/api/ping', timeout: 1500
+            }, (res) => {
+                res.resume();
+                if (res.statusCode === 200) return resolve(true);
+                if (Date.now() > deadline) return reject(new Error('服务端就绪超时'));
+                setTimeout(tick, 300);
+            });
+            req.on('error', () => {
+                if (Date.now() > deadline) return reject(new Error('服务端就绪超时'));
+                setTimeout(tick, 300);
+            });
+            req.on('timeout', () => { req.destroy(); });
+        };
+        tick();
+    });
+}
+
+/** 内置服务端诊断日志(写入临时文件, 打包后控制台不可见时排障用) */
+function bundledLog(msg) {
+    try {
+        const line = `[${new Date().toISOString()}] ${msg}\n`;
+        fs.appendFileSync(path.join(require('os').tmpdir(), 'asset-desktop.log'), line, 'utf8');
+    } catch (_) {}
+}
+
+/** 拉起内置完整服务端; 成功返回 port, 失败返回 null(调用方回退旧内嵌服务器) */
+async function startBundledServer(dataDir) {
+    const exePath = locateBundledServer();
+    bundledLog('locateBundledServer => ' + (exePath || 'null') + ' (isPackaged=' + app.isPackaged + ', resourcesPath=' + (process.resourcesPath || '-') + ')');
+    if (!exePath) {
+        console.log('[内置服务端] 未找到 asset-server.exe, 使用精简内嵌服务器(无飞书同步)');
+        return null;
+    }
+    try {
+        const port = await getFreePort();
+        const env = {
+            ...process.env,
+            ASSET_HOST: '127.0.0.1',
+            ASSET_PORT: String(port),
+            ASSET_DATA_DIR: dataDir,          // SQLite 数据目录
+            ASSET_LEGACY_DATA_DIR: dataDir,  // 旧版 JSON 数据同目录, 首次启动自动迁移
+            ASSET_EMBEDDED_TOKEN: HTTP_API_TOKEN,  // 内嵌免密 token
+        };
+        bundledLog('spawn: ' + exePath + ' port=' + port + ' dataDir=' + dataDir);
+        const child = spawn(exePath, [], {
+            cwd: path.dirname(exePath),
+            env,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        embeddedServerProc = child;
+        child.stdout.on('data', (d) => { try { process.stdout.write('[asset-server] ' + d); } catch (_) {} });
+        child.stderr.on('data', (d) => { try { process.stderr.write('[asset-server] ' + d); } catch (_) {} });
+        child.on('error', (err) => {
+            bundledLog('spawn error: ' + (err && err.message));
+        });
+        child.on('exit', (code) => {
+            console.warn(`[内置服务端] 子进程退出 code=${code}`);
+            bundledLog('子进程退出 code=' + code);
+            if (embeddedServerProc === child) embeddedServerProc = null;
+        });
+
+        await waitForServerReady(port, 25000);
+        console.log(`[内置服务端] asset-server.exe 已启动: 127.0.0.1:${port}`);
+        bundledLog('服务端就绪: 127.0.0.1:' + port);
+        return port;
+    } catch (e) {
+        console.warn('[内置服务端] 启动失败, 回退精简内嵌服务器: ' + (e && e.message));
+        bundledLog('启动失败, 回退精简内嵌服务器: ' + (e && e.message));
+        try { if (embeddedServerProc) { embeddedServerProc.kill(); embeddedServerProc = null; } } catch (_) {}
+        return null;
+    }
+}
+
+/** 关闭内置服务端子进程(Windows 连进程树一起结束) */
+function killBundledServer() {
+    const proc = embeddedServerProc;
+    embeddedServerProc = null;
+    if (!proc) return;
+    try {
+        if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        } else {
+            proc.kill('SIGTERM');
+        }
+    } catch (_) { try { proc.kill(); } catch (_e) {} }
+}
+
+/**
+ * 单机模式:内置完整服务端(优先) 或 精简内嵌 HTTP 服务器(回退) + 本地数据目录
  */
 async function startStandaloneMode() {
     // 确定数据目录并初始化
@@ -1576,14 +1930,27 @@ async function startStandaloneMode() {
         console.warn('[应用] 健康检查执行失败(不阻塞启动): ' + (hrErr && hrErr.message || String(hrErr)));
     }
 
-    // 启动内嵌 HTTP 服务器
-    let port;
+    // 优先启动内置完整服务端(含飞书同步); 失败回退精简内嵌服务器
+    let port = null;
     try {
-        port = await startServer(APP_DIR, dataDir);
+        port = await startBundledServer(dataDir);
     } catch (e) {
-        console.error(`[应用] HTTP 服务器启动失败,应用将退出:`, e);
-        app.quit();
-        return;
+        console.warn('[应用] 内置服务端异常, 尝试回退: ' + (e && e.message));
+        bundledLog('startBundledServer 抛错: ' + (e && e.message));
+    }
+    if (port) {
+        bundledLog('使用内置完整服务端 port=' + port);
+    } else {
+        bundledLog('回退精简内嵌服务器');
+    }
+    if (!port) {
+        try {
+            port = await startServer(APP_DIR, dataDir);
+        } catch (e) {
+            console.error(`[应用] HTTP 服务器启动失败,应用将退出:`, e);
+            app.quit();
+            return;
+        }
     }
 
     // 创建浏览器窗口
@@ -1626,11 +1993,12 @@ async function startStandaloneMode() {
         }
     });
 
-    // 外部链接在系统默认浏览器中打开
+    // 外部链接在系统默认浏览器中打开(本地打印页走 Electron 预览窗口)
+    ensurePrintCaptureBound();
     mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-        if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
-            shell.openExternal(targetUrl);
-        }
+        if (/asset_label_print\.html/i.test(targetUrl)) { openPrintWindow(targetUrl); return { action: 'deny' }; }
+        if (!targetUrl || targetUrl === 'about:blank') { return { action: 'allow' }; }
+        if (isExternalUrl(targetUrl)) shell.openExternal(targetUrl);
         return { action: 'deny' };
     });
 
@@ -1667,6 +2035,11 @@ app.on('window-all-closed', () => {
 
 // P1-5: 应用退出前优雅关闭 HTTP 服务器,避免最后的写入被截断导致 JSON 文件损坏
 app.on('before-quit', (event) => {
+    // 内置完整服务端子进程: 直接结束(独立进程, 自带 SQLite 优雅关闭)
+    if (embeddedServerProc) {
+        console.log('[退出] 正在关闭内置服务端...');
+        killBundledServer();
+    }
     if (httpServer && httpServer.listening) {
         event.preventDefault();
         console.log('[退出] 正在优雅关闭 HTTP 服务器...');

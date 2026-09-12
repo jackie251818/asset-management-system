@@ -1,6 +1,6 @@
 # C/S 架构改造变更摘要
 
-> 改造周期：2026-08-30（单日完成阶段 1-3 及三项增强）；2026-08-31 增补增强 ④⑤；2026-09-01 增补增强 ⑥（服务端信息面板 + 数据手动双向同步 + sandbox 修复）；2026-09-03 修复系统名称登录页不生效（鉴权白名单精确放行 + 兼容层前缀白名单 + alert 改 toast，修复记录 #16-18）
+> 改造周期：2026-08-30（单日完成阶段 1-3 及三项增强）；2026-08-31 增补增强 ④⑤；2026-09-01 增补增强 ⑥（服务端信息面板 + 数据手动双向同步 + sandbox 修复）；2026-09-03 修复系统名称登录页不生效（鉴权白名单精确放行 + 兼容层前缀白名单 + alert 改 toast，修复记录 #16-18）；2026-09-03 Linux 部署 + EXE 客户端迁移到 .247 全面验证（V8 字节码跨平台不兼容 → 改源码部署、npm install 缺 make → 装编译工具链、EXE 客户端手动预配置 3 个踩坑：userData 目录名 / UTF-8 BOM / server.config.json 检测不可靠，修复记录 #19-23）；2026-09-03 增补增强 ⑦ 飞书多维表格双向同步（零侵入设计：无配置时系统行为不变，详见 2.9 节）
 > 关联文档：`CS架构部署文档.md`（部署操作手册）
 
 ---
@@ -155,6 +155,30 @@
 
 ---
 
+### 2.9 增强 ⑦：飞书多维表格双向同步（2026-09-03）
+
+| 文件 | 变更 | 说明 |
+| --- | --- | --- |
+| `server/src/feishu-sync.js` | **新增** | 飞书 API 客户端 + 同步引擎：tenant_access_token 缓存（提前 5 分钟刷新）、字段映射（docToFields/recordToDoc）、push/pull、LWW 冲突解决、401/429/5xx 重试、批量 500 条切片；模块加载时自管 `CREATE TABLE IF NOT EXISTS feishu_sync_state`（不改 db.js）；配置存 kv_store 键 `feishu_sync_config` |
+| `server/src/routes/feishu.js` | **新增** | REST 路由 `/api/feishu/*`：config CRUD（app_secret 掩码防泄露）、test-connection、fields 列表、auto-detect 字段映射、sync/push、sync/pull、sync/status；全部 `requireAdmin`（含敏感凭证） |
+| `server/src/index.js` | 修改 | L21 + L139 接线 2 行：`require('./routes/feishu').router` + `app.use(feishuRouter.routes())`（compatRouter 之后） |
+| `js/feishu-sync.js` | **新增** | 前端交互 IIFE：依赖 ApiClient.ready/csMode/request；单机模式显示提示；C/S 模式加载配置 + 渲染映射表 + 绑定 6 按钮（测试连接/加载字段/自动映射/保存配置/推送/拉取）；拉取后调用 `ApiClient.reloadAssetsData()` 刷新资产列表 |
+| `index.html` | 修改 | L1391-1470 新增 `#feishu-sync-card`（默认 `display:none`，仅 C/S 模式显示）；L1743 新增 `<script src="js/feishu-sync.js?v=3.4.7" defer>` |
+
+**零侵入设计**：不使用飞书时系统行为完全不变——`feishu_sync_config` 键不存在时 `getConfig()` 返回 null，路由首行校验返回"请先配置飞书凭证"；UI card 默认 `display:none`，单机模式不显示（仅显示提示）或 C/S 模式才显示；新表由模块自管 `CREATE TABLE IF NOT EXISTS`，不改 db.js；复用 `validateAssetDoc/rowsToDocs/writeAssetTx/requireAdmin/audit/ok/ERR`，不改动 auth.js / asset-mapper.js / routes/assets.js / compat.js / events.js / api.js / storage.js；无新 npm 依赖（Node 22 原生 fetch）。
+
+**冲突解决策略**（默认 LWW）：
+
+| 策略 | 拉取行为 |
+| --- | --- |
+| `last_write_wins`（默认） | 比较飞书 `last_modified_time`（毫秒时间戳）与本地 `updated_at`，1s 容差，远端较新则覆盖 |
+| `prefer_local` | 只新增不覆盖（跳过所有本地已存在的 id） |
+| `prefer_remote` | 无条件覆盖本地 |
+
+**错误处理**：飞书 401 token 过期刷新重试 1 次；429 写并发限制指数退避 1s/2s/4s 最多 3 次；5xx 重试 2 次间隔 2s/4s；单条 record 映射失败收集到 `failed[]`/`invalid[]` 不阻塞整体；并发触发同步返回 409；事务异常自动回滚。
+
+---
+
 ## 3. 关键修复记录（验证阶段定位）
 
 | # | 问题 | 根因 | 修复 |
@@ -177,6 +201,11 @@
 | 16 | 系统设置改了系统名称后，**登录页 logo 与窗口标题仍是旧名"电脑资产管理系统"**（浏览器已登录态正常，Electron 清缓存后必现） | 登录页未登录无 JWT，`login.html` 拉取 `GET /api/load?key=systemSettings` 被全局鉴权中间件 401 拒绝（白名单仅 login/ping/list/info）；浏览器里因携带已登录 token 而"看起来正常"，掩盖了问题 | ① `login.html` 新增 `applySystemName()`：fetch 系统设置动态更新 `<title>` 与 `.login-title`，失败降级 `localStorage.last_system_name`；② `server/src/index.js` 鉴权中间件对 `GET /api/load` 精确放行公开键（`systemSettings` / `custom_options_*`），业务键仍 401；③ `main.js` 窗口标题经 `page-title-updated` 跟随页面 title |
 | 17 | C/S 模式保存用户视图状态（`asset_userStateData_<userId>` 键）被服务端 400 拒绝 | compat 层 save/delete 键名白名单 `KV_KEYS` 为精确匹配数组，带 userId 后缀的动态键不在名单内 | `server/src/routes/compat.js` 新增 `KV_PREFIXES = ['asset_userStateData_']` 前缀匹配 + `isAllowedKvKey()` 统一校验，save/delete 路由共用 |
 | 18 | 系统设置点"保存设置"后弹出原生 alert，Electron 下弹窗标题显示 appId（asset-management-system）且同步弹窗破坏键盘焦点 | `js/events.js` 保存回调使用浏览器原生 `alert('设置已保存')`，Electron 包装为同步对话框且标题取 appId | 改为 `showNotification('设置已保存', 'success')` toast 通知，与应用内其他反馈一致 |
+| 19 | Linux 部署方式 A（`asset-server-linux` 打包产物）启动即崩溃 `status=1/FAILURE` | Windows 开发机交叉打包的 `@yao-pkg/pkg` 产物内嵌 V8 字节码与 Linux 端 V8 不兼容（`V8 rejected the bytecode cache`），即便 `--targets node22-linux-x64` 指定目标平台，字节码仍按宿主 V8 生成 | 改用方式 B 源码部署（`node src/index.js`），完全绕过字节码问题；方式 A 可修复方向：在 Linux 开发机上打包或 `pkg` 配置加 `"bytecode": false` |
+| 20 | 方式 B `npm install` 报 `not found: make`（better-sqlite3 编译失败） | Ubuntu Server 默认未装编译工具链，better-sqlite3 原生模块需 make + g++ + python3 | `sudo apt install -y build-essential python3` 后重试 `npm install`（约 1 分钟完成，含 better-sqlite3 本地编译） |
+| 21 | EXE 客户端切到 .247 服务器时，`%APPDATA%\固定资产管理系统\connection.json` 路径不存在 | Electron userData 目录名取 `package.json` 的 `name` 字段（`asset-management-system`，英文），非中文产品名。手动预配置时路径误用中文目录 | 改正路径为 `%APPDATA%\asset-management-system\connection.json`（详见部署文档 7.3 踩坑问题 1） |
+| 22 | 用 PowerShell `Set-Content -Encoding UTF8` 写入 connection.json 后，`readUserConnection()` 返回 `{mode:'invalid'}` 并弹出设置窗口而非直连 | `Set-Content -Encoding UTF8` 写入 UTF-8 BOM（`EF BB BF`），Node.js `JSON.parse('\uFEFF{...}')` 抛 `Unexpected token \uFEFF`，异常被捕获后判 invalid | 用 `[System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))` 或 `node -e` 写入无 BOM 的 JSON（详见部署文档 7.3 踩坑问题 2） |
+| 23 | 在 EXE 旁放置 `server.config.json`，启动后客户端未检测到，仍走单机模式 | 便携 EXE（electron-builder `portable` 目标）运行时解压到临时目录启动，`PORTABLE_EXECUTABLE_DIR` 环境变量可能未注入，`getExeDir()` 回退到 `path.dirname(app.getPath('exe'))` 指向临时目录而非 EXE 所在目录 | 生产环境优先用**应用内"连接服务器设置"**（界面操作保存的 connection.json 天然无 BOM + 路径正确）；server.config.json 仅作兼容备选（详见部署文档 7.3 踩坑问题 3） |
 
 ---
 
@@ -197,6 +226,9 @@
 | CORS 跨域兼容（Origin:null 反射、OPTIONS 预检 204） | 通过 |
 | 连接设置窗口服务端信息面板 + 数据手动双向同步（服务端 192.168.40.251:3456 实测：拉取 7 键 / 推送 7 键 / 双向一致性 / 必填校验） | 通过 |
 | 系统名称全局生效（2026-09-03）：浏览器端到端 6 步（改名→退出两次→登录页显示新名→重登持久化）；Electron 清缓存启动登录页 logo/窗口标题为新名；公开键无 token 200、业务键无 token 401 | 通过 |
+| Linux 源码部署全面验证（2026-09-03，IP 192.168.40.247，Ubuntu 22.04 + Node 22.23.2 + nginx 1.18）：38 项 API 测试全部通过（鉴权白名单 / 登录 / systemSettings 读写 value 字段 / 资产 CRUD 含乐观锁 409 / 用户管理 viewer 403 / X-Server-Token 兼容 / 前端 20 个静态文件 200 / HTTPS 完整链路 / data-version 指纹）；浏览器 UI 全流程通过（login 模式选择→C/S 登录→主界面→控制面板/资产列表/系统设置页→✅ 服务器模式标识）；nginx 80/443 反代 + ufw 防火墙 + systemd 开机自启均正常 | 通过 |
+| EXE 客户端切换服务器迁移验证（2026-09-03，IP .251 → .247）：通过应用内"连接服务器设置"（Ctrl+Alt+S）→ 填入 `http://192.168.40.247:3456` → 测试连接 ✓ → 保存并重启，EXE 重启后 `connApi.get` 显示 `appSettingExists:true`，直连 .247，资产/系统设置/用户管理界面数据正常加载。同时记录 3 个手动预配置踩坑（userData 目录名取英文 `asset-management-system`、PowerShell UTF-8 BOM 致 JSON.parse 失败、便携 EXE 临时目录启动使 server.config.json 检测不可靠），均已写入部署文档 7.3 节作为生产环境指引 | 通过 |
+| 飞书多维表格双向同步验证（2026-09-03，本机 127.0.0.1:3456 + Node 22.16）：8 项 API 端到端测试全部通过——① 未登录 GET `/api/feishu/sync/status` → 401 ✓；② admin 登录取 JWT ✓；③ 已登录 GET config 返回空 `{}` ✓；④ 已登录 GET sync/status 返回 `lastSyncAt:null` ✓；⑤ 无配置 POST sync/push → 400 "请先配置飞书凭证" ✓；⑥ POST config 保存测试配置 ✓；⑦ 保存后 GET config → app_secret 掩码 `secr*****st` ✓；⑧ DELETE config 清空 ✓。模块加载时自管建表 `feishu_sync_state` + 索引 `idx_feishu_record_id` 已确认创建；零侵入保证（无配置时系统行为不变）已确认 | 通过 |
 
 ---
 

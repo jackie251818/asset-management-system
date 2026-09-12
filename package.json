@@ -1,6 +1,6 @@
 {
   "name": "asset-management-system",
-  "version": "2.4.5",
+  "version": "2.5.0",
   "description": "固定资产管理系统",
   "main": "main.js",
   "author": "Asset Management",
@@ -17,7 +17,8 @@
   },
   "devDependencies": {
     "electron": "^30.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "ws": "^8.21.3"
   },
   "build": {
     "appId": "com.local.asset-management",
@@ -27,6 +28,12 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "extraResources": [
+      {
+        "from": "server/dist/asset-server.exe",
+        "to": "asset-server.exe"
+      }
+    ],
     "files": [
       "main.js",
       "login.html",
@@ -35,7 +42,6 @@
       "index.html",
       "styles.css",
       "asset_label_print.html",
-      "final_chart_fix.js",
       "build-info.json",
       "js/**/*",
       "libs/**/*",
@@ -53,10 +59,15 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "electronLanguages": ["zh-CN", "en-US"],
+      "electronLanguages": [
+        "zh-CN",
+        "en-US"
+      ],
       "compression": "maximum"
     },
     "portable": {

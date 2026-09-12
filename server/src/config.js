@@ -55,6 +55,13 @@ module.exports = {
     PORT: parseInt(process.env.ASSET_PORT || '3456', 10),
     JWT_SECRET: loadOrCreateSecret(),
     JWT_EXPIRES: process.env.ASSET_JWT_EXPIRES || '12h',
+    /**
+     * 内嵌免密模式(Electron 桌面版单机):
+     *   设置 ASSET_EMBEDDED_TOKEN 后, 携带 X-Server-Token: <该值> 的请求直接视为管理员,
+     *   /api/info 返回 embedded=true, 并向 HTML 页面注入 window.__SERVER_TOKEN__。
+     *   仅限 Electron 主进程拉起本进程时设置(配合 127.0.0.1 绑定)。
+     */
+    EMBEDDED_TOKEN: process.env.ASSET_EMBEDDED_TOKEN || '',
     /** 请求体上限: 兼容导入(附件 base64 内嵌)场景 */
     BODY_LIMIT: '64mb',
     VERSION: '1.0.0',

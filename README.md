@@ -1,27 +1,31 @@
-# 电脑固定资产管理系统 v3.4
+# 电脑固定资产管理系统 v3.6
 
 > 固定资产管理平台，双运行形态：
-> **单机版** — 基于 Electron 的离线桌面应用，便携式 .exe 单文件运行；
+> **单机版** — 基于 Electron 的离线桌面应用，便携式 .exe 单文件运行；v2.5.0 起单机模式**内置完整服务端**（自动拉起 asset-server 子进程），飞书同步等 C/S 全部功能单机开箱即用；
 > **C/S 版** — 多用户客户端/服务端架构，浏览器或 Electron 客户端接入，数据集中存储于 SQLite。
 
 ## 运行形态
 
 | 形态 | 适用场景 | 说明 |
 |------|----------|------|
-| 单机便携版 | 个人/单机使用 | 双击 EXE 即用，数据随 EXE 走（行为与 v2.x 完全一致） |
+| 单机便携版 | 个人/单机使用 | 双击 EXE 即用；v2.5.0 起自动拉起内置 asset-server（127.0.0.1 随机端口 + 一次性 token 免密），**飞书同步/用户管理等 C/S 功能单机同样可用**；内置服务不可用时自动回退旧精简服务器 |
 | C/S 客户端 | 团队多用户 | 应用内"连接服务器设置"或 EXE 旁 `server.config.json` 即直连服务端，本地不落数据 |
 | 浏览器访问 | 团队多用户 | 直接访问服务端地址，免安装，Edge/Chrome 均可 |
+| 手机 App（Android） | 移动扫码盘点 | **React Native 0.75 原生 App**（`mobile-app-rn/`，2026-09-12 取代旧 Capacitor 套壳方案）；JS bundle 内置离线运行，VisionCamera v4 + MLKit 原生扫码，扫码后弹资产卡"一码一确认"再标记已盘；MMKV 本地存储 + 四套主题。**改动 RN 代码需重新构建 APK**（已固化 `rn-apk-deploy` 技能，说"发布"即可）。构建方法见 **[手机App构建说明.md](手机App构建说明.md)** |
 
 ## 功能特性
 
 - **资产 CRUD** — 资产信息的增删改查，支持自定义字段下拉选项
 - **数据导入导出** — Excel / JSON 格式导入导出，支持模板下载和数据备份恢复（服务端事务保护）
 - **统计图表** — 4 个 Chart.js 图表（资产状态分布、人员资产、部门资产、设备类型）
-- **二维码标签** — 资产二维码生成与标签打印（70mm x 50mm）
+- **资产登记卡打印** — 多联单式登记卡（主进程 `openPrintWindow` 开预览窗口 + 蓝色 toolbar 打印/关闭按钮；双路径兜底：connApi IPC 主路径 + window.open `browser-window-created` 捕获路径，不跳浏览器）
+- **二维码标签** — 资产二维码生成与标签打印（70mm x 50mm；规格型号字段取 asset.brandModel）
 - **附件管理** — 图片 / PDF 附件上传、缩略图预览、文件查看器（支持缩放）
 - **维护记录** — 资产维护记录的添加和删除
-- **多用户与权限**（C/S）— 登录认证（JWT），角色 `admin / editor / viewer`，操作审计；**所有用户可自助修改自己的登录密码**（顶栏用户区 → "修改密码"，需验证旧密码）；admin 还可在"用户管理"页面重置任意用户密码 / 修改角色 / 删除账号
+- **资产盘点** — 扫码盘点（手机 App 调原生相机扫码，"一码一确认"：扫到弹出资产信息卡、人工确认后标记已盘）+ 列表勾选盘点双模式；每条资产标记 已盘 / 未盘到 / 异常（异常可填备注）；按全部 / 部门 / 地点发起盘点批次，资产快照防后续删改；实时进度条 + 统计卡（应盘/已盘/未盘到/异常）；盘点报告导出 Excel（明细 + 汇总双 sheet）；多轮历史批次可回看；乐观锁防多人并发覆盖；**所有登录用户（含 viewer 只读角色）均可发起和执行盘点**。详见 **[资产盘点模块技术文档.md](资产盘点模块技术文档.md)**
+- **多用户与权限**（C/S）— 登录认证（JWT），角色 `admin / editor / viewer`，操作审计；**所有用户可自助修改自己的登录密码**（顶栏用户区 → "修改密码"，需验证旧密码）；admin 还可在"用户管理"页面重置任意用户密码 / 修改角色 / 删除账号；**viewer 可执行资产盘点**（盘点数据写入对 viewer 放行）
 - **数据手动双向同步** — 两个入口：① 连接服务器设置窗口；② 系统设置 → "服务器连接"卡片。均可将服务端数据拉取到本地、或将本地数据推送到服务端（全量覆盖，带二次确认），用于单机 ↔ 服务端数据互导
+- **飞书多维表格双向同步** — 系统资产与飞书 Bitable 手动互推/互拉（增量哈希检测、字段映射自动匹配、冲突 LWW 策略、操作审计）；支持一个多维表格下**多数据表按"主体"自动路由**；配置页提供「选择数据表」下拉（自动列出全部数据表、切换即重载字段，失效表红色告警）；内置小白引导向导 + 粘贴飞书链接自动提取 App Token/Table ID + 字段帮助气泡。C/S 模式与 v2.5.0+ 单机内嵌模式均可用。配置方法见 **[飞书同步配置指南.md](飞书同步配置指南.md)**
 - **服务端信息查看** — 系统设置"服务器连接"卡片（C/S 客户端模式自动显示）+ 连接服务器设置窗口，均展示服务器地址 / 名称 / 版本 / 当前登录用户；免鉴权 `GET /api/info` 即可查看
 - **并发安全**（C/S）— 乐观锁版本冲突检测、数据版本变更提醒、批量导入事务回滚
 - **皮肤主题** — 亮色 / 暗色 / 纯黑 / 科技 四套皮肤循环切换
@@ -40,8 +44,10 @@
 | 二维码 | qrcode-generator |
 | PDF预览 | pdf.js |
 | 图标 | Font Awesome |
+| 移动 App | React Native 0.75.4 + TypeScript（Android APK；React Navigation 四 Tab；VisionCamera v4 + MLKit 扫码；MMKV 持久化；Hermes） |
 | 单机数据存储 | localStorage + IndexedDB + 本地 .js 文件（三重冗余） |
 | C/S 数据存储 | SQLite 单文件（服务端唯一数据源） |
+| 盘点数据存储 | SQLite `kv_store` 表（键 `inventory_sessions` + `inventory_session_<id>`，乐观锁） |
 
 ## 快速开始
 
@@ -99,9 +105,9 @@ python -m http.server 8000
 ├── index.html              # 主页面（登录守卫；本地快照仅 file:// 协议加载；侧栏含全局"切换运行模式"入口）
 ├── login.html              # 统一登录入口（模式选择卡片 + C/S 登录二合一；?switch=1 强制绕开自动免密/自动跳转）
 ├── styles.css              # 全局样式（含 4 套皮肤主题变量）
-├── main.js                 # Electron 主进程（单机/C/S 双模式、HTTP 服务器、数据目录管理；两个 mainWindow 均注入 connection-preload.js 以暴露 connApi IPC 给渲染进程）
-├── final_chart_fix.js      # 图表渲染修复（200ms 防抖）
-├── asset_label_print.html  # 标签打印页面
+├── main.js                 # Electron 主进程（单机/C/S 双模式；单机模式拉起内置 asset-server.exe 子进程并注入一次性免密 token，失败回退精简服务器；退出时结束子进程；内置打印预览窗口 openPrintWindow + window.open 兜底捕获）
+├── connection-preload.js   # Electron preload 桥接（向渲染进程暴露 window.connApi.* IPC：连接服务器 / printCard 打印登记卡等）
+├── asset_label_print.html  # 标签打印页面（规格型号取 asset.brandModel）
 ├── 安装.bat                # 创建桌面快捷方式（调用 install.ps1）
 │
 ├── js/                     # 前端模块
@@ -112,6 +118,9 @@ python -m http.server 8000
 │   ├── asset-add.js · asset-edit.js · search-filter.js
 │   ├── import-export.js · print.js · charts.js
 │   ├── maintenance.js · notifications.js · init.js · users.js
+│   ├── inventory.js        # 资产盘点模块（批次 CRUD / 扫码盘点 / 异常备注 / 乐观锁 / Excel 报告导出）
+│   ├── mobile-bridge.js    # 旧 Capacitor WebView 移动桥（已废弃，现 RN 原生 App 不依赖；文件保留供历史 WebView 包兼容）
+│   └── feishu-sync.js      # 飞书同步卡片（配置表单/字段映射/数据表下拉/推送拉取/小白引导/链接自动提取）
 │
 ├── libs/                   # 第三方库（离线使用）
 │   └── chart / xlsx / qrcode / pdf / font-awesome 等
@@ -119,18 +128,29 @@ python -m http.server 8000
 ├── data/                   # 单机数据目录（运行时自动生成）
 │
 ├── server/                 # ★ C/S 服务端（子项目）
-│   ├── src/                #   index.js 入口、config、db、auth、routes/（REST + 兼容层）
+│   ├── src/                #   index.js 入口（内嵌免密模式 + HTML token 注入 + 外部静态目录优先）、config、db、auth、routes/（REST + 兼容层 + feishu 飞书路由）
+│   ├── src/feishu-sync.js  #   飞书同步引擎（token 缓存/多表路由/字段映射/推送拉取/LWW 冲突/重试限流）
+│   ├── src/auto-migrate.js #   内嵌模式首启自动迁移旧版 JSON 数据到 SQLite（失败不阻塞启动）
 │   ├── tests/api.test.js   #   57 项 API 测试（npm test）
 │   ├── migrate.js          #   旧单机 JSON → SQLite 迁移工具（npm run migrate）
 │   ├── backup.js           #   数据库在线备份工具
 │   ├── reset-admin.js      #   admin 密码重置工具
-│   ├── scripts/build-exe.js#   打包脚本（npm run build:exe → dist/asset-server.exe）
-│   ├── dist/               #   独立服务端 EXE 产物
-│   ├── deploy/             #   ★ 生产部署包（一键安装.bat：证书+防火墙+双服务+健康检查）
+│   ├── scripts/build-exe.js#   打包脚本（npm run build:exe → dist/asset-server.exe；build:linux → asset-server-linux）
+│   ├── dist/               #   独立服务端产物（asset-server.exe 作为 extraResources 打入桌面包）
+│   ├── deploy/             #   ★ 生产部署包（一键安装.bat：证书+防火墙+双服务+健康检查；asset-server.service 用于 Linux）
 │   └── data/               #   SQLite 数据目录（asset.db）
 │
-├── CS架构部署文档.md       # 部署操作手册（服务端/数据库/客户端/生产环境）
-├── CS架构改造变更摘要.md   # 本次 C/S 改造的变更明细
+├── mobile-app-rn/          # ★ React Native 原生 Android 工程（现行手机 App）
+│   ├── src/                    # TS/TSX 源码（api/store/theme/navigation/screens/components/hooks）
+│   ├── android/                # Gradle 8.10.2 + JDK 17 + AGP 8.7.2（gradle-plugins/ 预构建插件 jar）
+│   └── package.json            # RN 0.75.4 / VisionCamera v4 / MMKV 2.12 / Navigation 6（版本锁定见构建说明）
+│
+├── ReactNative重建方案.md  # ★ RN 重建选型与方案（旧 Capacitor → 原生 RN 的改造依据）
+├── 飞书同步配置指南.md     # ★ 飞书应用创建/凭证获取/数据表选择/字段映射/同步操作/FAQ（小白版）
+├── CS架构部署文档.md       # 部署操作手册（Windows/Linux 服务端、nginx、数据库、客户端）
+├── CS架构改造变更摘要.md   # C/S 改造的变更明细
+├── 资产盘点模块技术文档.md # ★ 盘点模块需求/架构/数据结构/API/前端/UI/移动端/验证方案
+├── 手机App构建说明.md      # ★ RN 原生 APK 环境依赖/构建发布流程/踩坑记录/版本记录
 └── README.md
 ```
 
@@ -148,7 +168,19 @@ python -m http.server 8000
 
 客户端在 HTTP 模式下**不读本地快照**，避免脏数据"复活"。
 
-### 单机形态（与 v2.x 一致）
+### 单机形态（v2.5.0 起内置完整服务端）
+
+v2.5.0+ 便携版单机模式启动时，Electron 主进程自动拉起打包在 `resources/asset-server.exe` 的完整服务端：
+
+```
+Electron 主进程
+  └─ spawn asset-server.exe（127.0.0.1 随机端口, ASSET_EMBEDDED_TOKEN 一次性免密 token）
+       └─ SQLite 数据（userData/data/asset.db），首次启动自动从旧版 JSON 迁移
+页面经 window.__SERVER_TOKEN__ 自动携带 X-Server-Token，免登录直接进入（视为管理员）
+内置进程找不到/启动失败 → 自动回退旧精简 HTTP 服务器（localStorage/IndexedDB 三重冗余）
+```
+
+旧精简服务器形态（回退模式，与 v2.x 一致）：
 
 ```
 写入流程 (storageManager.setItem):
@@ -175,8 +207,8 @@ python -m http.server 8000
 | 角色 | 权限 |
 |------|------|
 | admin | 全部功能 + 用户管理 + 重置他人密码 + 修改他人角色 |
-| editor | 资产增删改查、导入导出、**修改自己的登录密码** |
-| viewer | 只读查询、**修改自己的登录密码** |
+| editor | 资产增删改查、导入导出、**修改自己的登录密码**、资产盘点 |
+| viewer | 只读查询、**修改自己的登录密码**、**资产盘点**（盘点数据写入对 viewer 放行，其他写操作仍禁止） |
 
 - 默认管理员：`admin / admin123`（**首次登录后立即改密**，顶栏"修改密码"按钮自助完成）
 - 忘记密码：服务端 `node reset-admin.js 新密码`（≥6 位）；或由其他 admin 登录"用户管理"页面重置
@@ -248,6 +280,11 @@ Electron 开发模式下 `Ctrl+R` 刷新窗口；浏览器调试时 `Ctrl+F5` �
 | 服务端启动失败 | 查看 `server/deploy/logs/` 下 .err.log；确认部署路径为纯英文（nginx 限制） |
 | nginx 报 cannot load certificate | 部署路径含中文，移到纯英文路径后重启服务 |
 | 忘记 admin 密码 | 三种方式：① 若有其他 admin 账号登录，可在"用户管理"页面重置；② 服务端执行 `node reset-admin.js 新密码`；③ 自己记得旧密码的话，顶栏直接点"修改密码"自助修改 |
+| 系统设置里看不到飞书同步卡片 | 旧版纯单机精简模式无飞书功能：升级 v2.5.0+ 便携版（单机自动拉起内置服务端）或连接 C/S 服务器；已连接仍看不到则 Ctrl+Shift+R 强刷；服务器前端过旧时让管理员更新前端文件 |
+| 飞书测试连接失败 | 按提示排查：App ID/Secret 错误或应用未发布（开放平台核对并发布版本）；表格无权限（飞书表内"···→添加文档应用"把应用加进多维表格）；缺权限（权限管理勾全多维表格权限后重新发布）。详见 [飞书同步配置指南.md](飞书同步配置指南.md) FAQ |
+| 客户端连接服务器超时 | 地址不要带 `:3456`——生产部署（nginx）下 3456 仅监听 127.0.0.1，外部只能走 80/443；填 `http://<服务器IP>` 即可。排查：`curl http://<IP>/api/ping` |
+| 单机版飞书/用户管理没有反应 | 内置 asset-server 未拉起：查看 `%TEMP%\asset-desktop.log` 诊断日志；确认 `%APPDATA%\asset-management-system\connection.json` 未残留 `mode:client` 旧配置（残留会走 C/S 分支不启动内置进程，删除该文件回到单机模式） |
+| 深色主题下某块白底/文字看不清 | 多为内联硬编码浅色样式未跟随主题；已批量修复为 CSS 变量，如新增页面遇到同类问题，用工作区技能 `theme-color-fix` 扫描替换 |
 
 ## 打包部署
 
@@ -277,6 +314,36 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 - **rcedit-x64.exe 需要管理员权限**：写入 PE 版本资源必须以管理员身份运行 electron-builder。`scripts/build-portable.js` 已内置自动提权（非管理员 → PowerShell `Start-Process -Verb RunAs` → UAC → 重跑），无需手动右键。跳过提权时 rcedit 会报 `Fatal error: Unable to commit changes`（electron-builder 重试 3 次后继续，产物可运行但属性页缺 FileDescription/InternalName）。
 
 ## 版本历史
+
+- **v3.7** (2026-09-12) — React Native 原生 App 重建 + 飞书数据表选择器：
+  - **手机 App 原生重建**：废弃并删除旧 Capacitor WebView 套壳工程（`mobile-app/`，6.2 MB），按 **[ReactNative重建方案.md](ReactNative重建方案.md)** 新建 `mobile-app-rn/`（RN 0.75.4 + TypeScript，旧架构 + Hermes）；React Navigation 四 Tab（首页/资产/盘点/我的）+ Stack，Zustand + MMKV 持久化，四套主题；JS bundle 内置 APK 可离线运行；APK 约 200 MB（四架构 + MLKit 模型），托管于 `http://192.168.40.247/downloads/`
+  - **原生扫码（VisionCamera v4 + MLKit）**：`useCameraDevice('back')` + `useCodeScanner`（v4 已移除 frame processor 式 scanBarcodes），root build.gradle 开启 `VisionCamera_enableCodeScanner`；扫码交互改"**一码一确认**"——扫到即暂停相机、底部弹出资产信息卡、人工点「确认盘点」才标记已盘，解决对准后连续重复计数
+  - **联调修复（v1→v8 共 8 版）**：后端 `{code,data}` 响应解包导致的 MMKV 写入类型错误、RootNavigator MainTabs 标识符错误、盘点空数据 404 容错、MaterialCommunityIcons.ttf 未打包导致全图标方框；构建链解决中文路径（subst R 盘）、native_modules.gradle 管道死锁、foojay 自动下载卡死、mmkv 3.x 不支持旧架构等问题；发布流程固化为工作区技能 `rn-apk-deploy`（说"发布"自动 bundle→gradle→pscp 部署）
+  - **飞书同步「选择数据表」下拉**：配置页 Table ID 下方新增加载该多维表格全部数据表的下拉（服务端新增 `GET/POST /api/feishu/tables`、`POST /api/feishu/fields`，支持表单临时凭证）；选表即静默保存并自动重载字段；已保存表被删除/重建时下拉红色告警 `⚠ 已不存在, 请重选`（解决错误码 1254041 TableIdNotFound，此前只能改数据库）；粘贴链接解析后自动选中链接中的表
+  - **生产热更新**：`server/src/feishu-sync.js`、`server/src/routes/feishu.js`、`index.html`、`js/feishu-sync.js` 部署至 192.168.40.247 并重启 asset-server；临时修复失效默认表（选定字段全匹配的"花满堂"表）
+  - 文档：重写 [手机App构建说明.md](手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](飞书同步配置指南.md)
+
+- **v3.6** (2026-09-09) — 资产盘点模块 + Android 手机 App（**App 部分已被 v3.7 RN 原生版取代**）：
+  - **资产盘点模块**：新增侧边栏「资产盘点」菜单；支持发起盘点批次（全部/按部门/按地点）、扫码盘点（手机 App 原生相机循环扫码）+ 列表勾选盘点双模式；每条资产标记 已盘/未盘到/异常（异常弹窗填备注）；实时进度条 + 4 统计卡（应盘/已盘/未盘到/异常）；筛选 + 搜索；完成后导出 Excel 报告（明细 + 汇总双 sheet）；多轮历史批次回看；资产快照防后续删改；乐观锁防多人并发覆盖
+  - **数据存储**：盘点数据复用 `kv_store` 表（键 `inventory_sessions` 批次列表 + `inventory_session_<id>` 批次明细），经 `/api/save` `/api/load` `/api/delete` 兼容层读写，零基础设施改动
+  - **权限放行**：`server/src/routes/compat.js` KV 白名单新增 `inventory_sessions` 与 `inventory_session_` 前缀；`/api/save` `/api/delete` 对盘点键放行 **viewer 只读角色**（所有登录用户均可盘点）；盘点写入/删除记 `inventory.save`/`inventory.delete` 审计日志
+  - **新增文件**：`js/inventory.js`（完整 IIFE 模块）；修改 `js/config.js`（STORAGE_KEYS 加 2 常量）、`js/navigation.js`（pageHandlers 注册 inventory）、`index.html`（菜单 + 页面 + 3 弹窗 + 扫码遮罩 + 脚本引用）、`styles.css`（盘点卡片/徽章/行底色/遮罩样式，全 CSS 变量适配 4 主题）、`js/mobile-bridge.js`（新增 `scanForInventory` 循环扫码 + `stopInventoryScan`）
+  - **Android 手机 App**：Capacitor 6 工程（`mobile-app/`），APK 本地引导页配置服务器地址后远程加载业务页；原生 BarcodeScanner 扫码盘点 + Camera 拍照登记附件；业务页从服务器加载，**前端更新热上传即生效，无需重打 APK**；APK 6.2 MB，构建方法见 [手机App构建说明.md](手机App构建说明.md)
+  - **桌面端扫码降级**：桌面环境无相机时弹自定义输入框（替代原生 `prompt()`，规避 Electron v30+ 静默拦截），支持空格/逗号/换行分隔批量录入
+  - **生产部署**：`192.168.40.247`（Ubuntu 22.04）经 pscp + sudo cp/chown 热更新 7 文件（compat.js 重启服务，前端文件免重启）；旧文件自动备份至 `/tmp/inv-backup-<timestamp>/`；缓存版本号 bump（styles.css v3.4.5、mobile-bridge.js v1.1.0）
+
+- **v3.5** (2026-09-04) — 单机版内置完整服务端 + 飞书同步小白化 + Ubuntu 22.04 生产部署：
+  - **单机模式内嵌 asset-server**：`main.js` 单机启动时 spawn 打包在 `resources/asset-server.exe` 的完整服务端（随机端口 + `ASSET_EMBEDDED_TOKEN` 一次性免密，视为管理员），飞书同步/用户管理/审计等 C/S 功能单机开箱即用；服务端新增内嵌模式（`config.EMBEDDED_TOKEN`、`X-Server-Token` 鉴权、`/api/info` 返回 `embedded:true`、HTML 注入 `window.__SERVER_TOKEN__`）；找不到 EXE 时自动回退旧精简服务器；退出时 taskkill 结束子进程；诊断日志写 `%TEMP%\asset-desktop.log`
+  - **首启自动迁移**：`server/src/auto-migrate.js`——内嵌模式全新空库时从旧版 `assetManagementData.json/.js` 迁移资产/维保/附件/下拉选项/kv 到 SQLite（失败不阻塞启动，原数据不删）
+  - **pkg 外部静态目录优先**：服务端 EXE 同级目录的前端文件优先于内嵌快照，更新前端无需重打 EXE
+  - **飞书同步小白化**：系统设置飞书卡片新增 3 步图文"小白引导"折叠面板；粘贴飞书多维表格链接一键解析自动填入 App Token/Table ID（支持 base/wiki 链接、larksuite 国际版）；App Secret 显示切换；字段 ❓ 帮助气泡；未填凭证时按钮自动置灰并提示所缺项；加载字段后自动生成全字段映射表（同名/近义词智能预选，主键默认"资产编号"）；操作结果/状态提示全部改用主题 CSS 变量
+  - **深色主题适配修复**：新增 `--note-info/success/warn/danger-*` 语义色变量（4 套主题自动反色），飞书卡片、服务器连接卡片、用户管理页（新建用户/用户列表/操作日志/两个密码弹窗）、文件同步横幅、toast 通知的硬编码浅色样式全部替换为主题变量，修复深色/纯黑/科技主题下白底刺眼、白字白底看不清
+  - **资产登记卡打印修复（主进程双路径兜底）**：`main.js` 新增 `openPrintWindow()`（统一打印预览窗口入口）+ `injectPrintToolbar()`（注入蓝色 toolbar，#2563eb 背景，🖨 打印/关闭按钮，@media print 自动隐藏）+ `bindPrintPopupCapture()`（监听 `app.on('browser-window-created')` 兜底捕获空 URL window.open 弹窗）；`connection-preload.js` 暴露 `connApi.printCard(html)` IPC；`js/print.js:printAssetCard()` 优先走 IPC 主路径，浏览器环境 fallback window.open；修复 C/S 客户端打印跳浏览器窗口问题
+  - **标签打印规格型号修复**：`asset_label_print.html` 规格型号字段从 `asset.configuration`（空）改为 `asset.brandModel`，二维码纯文本 `createAssetText()` 同步修复
+  - **Ubuntu 22.04 生产部署**：源码部署于 `/opt/asset-server/`（systemd `asset-server` 服务，node 监听 127.0.0.1:3456）+ nginx 反代 80/443（自签证书）+ ufw；客户端连接地址填 `http://<服务器IP>`（不带端口，3456 不对外）；前端改动 pscp 上传后 chown asset 即热生效，无需重启服务
+  - 打包：便携版 `固定资产管理系统-便携版-2.5.0.exe`（78.1 MB，extraResources 含 asset-server.exe 72.8 MB）
+  - 配置手册：新增 **[飞书同步配置指南.md](飞书同步配置指南.md)**（面向使用者，含应用创建/权限发布/链接提取/字段映射/FAQ）
+  - **2026-09-04 生产热更新**：`192.168.40.247`（Ubuntu 22.04）经 pscp + sudo cp/chown 热更新 4 个前端文件——`js/print.js`（IPC 打印）、`js/feishu-sync.js`（飞书小白引导）、`asset_label_print.html`（brandModel 修复）、`index.html`（final_chart_fix.js 移除）。全部 HTTP 200 + 内容验证通过。详见 **[CS架构部署文档.md 11.14.1](CS架构部署文档.md)**
 
 - **v3.4.4** (2026-09-03) — 系统名称全局生效修复（登录页/窗口标题）+ 兼容层白名单修复：
   - **登录页动态系统名称**：`login.html` 新增 `applySystemName()`，未登录时经免鉴权 `GET /api/load?key=systemSettings` 拉取系统名称，动态更新登录页 logo 文案与 `<title>`（Electron 窗口标题经 `page-title-updated` 同步）；fetch 失败时降级读 `localStorage.last_system_name` 缓存

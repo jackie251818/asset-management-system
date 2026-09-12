@@ -18,7 +18,11 @@ const assetsRouter = require('./routes/assets').router;
 const optionsRouter = require('./routes/options').router;
 const statsRouter = require('./routes/stats').router;
 const compatRouter = require('./routes/compat').router;
+const feishuRouter = require('./routes/feishu').router;
 const { isFirstInit } = require('./db');
+
+// 全新库时自动导入旧版便携版 JSON/JS 数据(失败不阻塞启动)
+require('./auto-migrate').runAutoMigrate();
 
 const app = new Koa();
 
@@ -57,6 +61,9 @@ const PUBLIC_ROUTES = [
 // ============ 静态文件服务(仅 GET/HEAD, 非 /api 路径) ============
 
 const STATIC_ROOT = path.join(config.SERVER_ROOT, '..');
+// pkg 打包时支持 EXE 同级目录放置前端文件(热更新优先于内嵌快照)
+const IS_PKG = !!process.pkg;
+const EXTERNAL_STATIC_ROOT = IS_PKG ? path.dirname(process.execPath) : null;
 const MIME_TYPES = {
     '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -82,9 +89,24 @@ async function serveStatic(ctx) {
         ctx.body = { code: 40400, message: 'Not Found' };
         return;
     }
-    let filePath = (rel === '/') ? path.join(STATIC_ROOT, 'index.html') : path.join(STATIC_ROOT, rel);
-    // Windows 下 path.join 会把 / 还原为 \, 需确认仍在静态根内
-    if (!path.resolve(filePath).startsWith(path.resolve(STATIC_ROOT))) {
+    // 决定静态根: pkg 模式下先查 EXE 同级目录(外部热更新优先), 无则用内嵌快照
+    let staticRoot = STATIC_ROOT;
+    let filePath;
+    if (EXTERNAL_STATIC_ROOT) {
+        const externalPath = (rel === '/') ? path.join(EXTERNAL_STATIC_ROOT, 'index.html') : path.join(EXTERNAL_STATIC_ROOT, rel);
+        let extStat;
+        try { extStat = await fs.promises.stat(externalPath); } catch (_) {}
+        if (extStat) {
+            filePath = externalPath;
+            staticRoot = EXTERNAL_STATIC_ROOT;
+        } else {
+            filePath = (rel === '/') ? path.join(STATIC_ROOT, 'index.html') : path.join(STATIC_ROOT, rel);
+        }
+    } else {
+        filePath = (rel === '/') ? path.join(STATIC_ROOT, 'index.html') : path.join(STATIC_ROOT, rel);
+    }
+    // 安全校验: 解析后的路径必须在静态根内
+    if (!path.resolve(filePath).startsWith(path.resolve(staticRoot))) {
         ctx.status = 404; ctx.body = { code: 40400, message: 'Not Found' }; return;
     }
     let stat = null;
@@ -100,6 +122,22 @@ async function serveStatic(ctx) {
         return;
     }
     ctx.type = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+    // 内嵌免密模式: 向 HTML 页面注入一次性 token(同 Electron 主进程注入逻辑), 前端据此免登录
+    if (config.EMBEDDED_TOKEN && /\.html?$/i.test(filePath)) {
+        let html = await fs.promises.readFile(filePath, 'utf-8');
+        const inject = '<script data-injected-by="embedded-server">window.__SERVER_TOKEN__='
+            + JSON.stringify(config.EMBEDDED_TOKEN) + ';</script>';
+        if (/<head[^>]*>/i.test(html)) {
+            html = html.replace(/<head[^>]*>/i, m => m + inject);
+        } else if (/<html[^>]*>/i.test(html)) {
+            html = html.replace(/<html[^>]*>/i, m => m + inject);
+        } else {
+            html = inject + html;
+        }
+        ctx.set('Cache-Control', 'no-cache');
+        ctx.body = html;
+        return;
+    }
     ctx.set('Content-Length', stat.size);
     ctx.set('Cache-Control', 'no-cache');
     ctx.body = fs.createReadStream(filePath);
@@ -135,6 +173,7 @@ app.use(assetsRouter.routes()).use(assetsRouter.allowedMethods());
 app.use(optionsRouter.routes()).use(optionsRouter.allowedMethods());
 app.use(statsRouter.routes()).use(statsRouter.allowedMethods());
 app.use(compatRouter.routes()).use(compatRouter.allowedMethods());
+app.use(feishuRouter.routes()).use(feishuRouter.allowedMethods());
 
 // 兜底 404(JSON 格式)
 app.use(async (ctx) => {

@@ -1,0 +1,35 @@
+// Top-level build file
+buildscript {
+    ext {
+        kotlinVersion = "1.9.24"
+        buildToolsVersion = "34.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+        ndkVersion = "26.1.10909125"
+        // VisionCamera v4 原生 MLKit 扫码
+        VisionCamera_enableCodeScanner = true
+    }
+    repositories {
+        google()
+        mavenCentral()
+        flatDir { dirs new File(rootDir, 'gradle-plugins') }
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.7.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24"
+        classpath "com.google.code.gson:gson:2.10.1"
+        classpath files('gradle-plugins/react-native-gradle-plugin.jar', 'gradle-plugins/settings-plugin.jar', 'gradle-plugins/shared.jar')
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+    }
+}

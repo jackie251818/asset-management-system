@@ -2,10 +2,10 @@
 
 | 项目 | 内容 |
 |---|---|
-| 收口日期 | 2026-08-31（2026-09-01 增补：连接设置窗口服务端信息面板 + 数据手动双向同步，见验收记录 #14/#15） |
+| 收口日期 | 2026-08-31（2026-09-01 增补：连接设置窗口服务端信息面板 + 数据手动双向同步，见验收记录 #14/#15；2026-09-04 增补：v3.5 验收记录 #16-#20 — 单机内嵌完整服务端 + 飞书同步小白化 + 打印修复 + brandModel + 深色主题适配 + Ubuntu 22.04 部署） |
 | 改造范围 | 固定资产管理系统 v2.4（Electron 单机版）→ v3.0（单机 + C/S 双形态 + 统一登录入口 + 用户管理） |
 | 收口结论 | **改造目标全部达成，验收项全部通过，具备生产交付条件** |
-| 关联文档 | [CS架构部署文档.md](CS架构部署文档.md)（操作手册）· [CS架构改造变更摘要.md](CS架构改造变更摘要.md)（变更明细）· [README.md](README.md)（v3.2） |
+| 关联文档 | [CS架构部署文档.md](CS架构部署文档.md)（操作手册，v3.2）· [CS架构改造变更摘要.md](CS架构改造变更摘要.md)（变更明细）· [README.md](README.md)（v3.5）· [飞书同步配置指南.md](飞书同步配置指南.md) |
 
 ---
 
@@ -44,6 +44,11 @@
 | 13 | 侧栏"切换运行模式"入口（4 种运行环境按 matrix 分支分流、Electron 内嵌补 `cs-settings://` 同构拦截、login.html?switch=1 强制模式选择路径） | browser_use 端到端（C/S HTTP + Electron 内嵌） | ✅ 全路径覆盖 |
 | 14 | 连接设置窗口服务端信息面板 + 数据手动双向同步（拉取 7 键 / 推送 7 键 / 二次确认 / 双向一致性 / 必填字段校验） | 打包 EXE（asar 校验）+ 真实服务端 `192.168.40.251:3456` HTTP 端到端 | ✅ 全链路通过（2026-09-01） |
 | 15 | 连接设置窗口按钮点击无反应修复（两处根因：① sandbox + asar preload 静默失败 → sandbox:false + try-catch 兜底；② 误加 CSP `script-src` 拦截内联脚本 → 移除） | asar 解包验证 + CDP 实测（connApi 注入/卡片切换/测试连接/信息面板） | ✅ 修复确认 |
+| 16 | 单机版内嵌完整 asset-server.exe（v3.5）——随机端口 + 一次性 ASSET_EMBEDDED_TOKEN 免密、首启自动迁移旧版 JSON→SQLite、pkg 外部静态优先 | Electron 便携版 v2.5.0（78.1 MB，assets-server.exe 72.8 MB 内嵌 resources）运行验证 | ✅ 飞书同步/用户管理/审计 C/S 功能单机开箱即用 |
+| 17 | 飞书同步双向同步（小白引导/链接自动解析/字段映射/LWW 冲突）+ Ubuntu 22.04 生产部署（systemd + nginx 反代 80/443） | 服务端 `192.168.40.247` 实测，C/S 客户端连入飞书卡片可见，p c p + chown 前端热更新 | ✅ 通过 |
+| 18 | **资产登记卡打印**（4 条路径全部覆盖：①connApi IPC 主路径→main.js openPrintWindow；②window.open browser-window-created 兜底捕获→openPrintWindow；③标签打印 loadURL→did-finish-load 注入 toolbar；④浏览器环境 window.open fallback）+ 蓝色 toolbar 注入（#2563eb、🖨 打印/关闭按钮、@media print 自动隐藏） | Electron 便携版 v2.5.0 端到端实测（主进程 `%TEMP%\asset-main.log` 跟踪），不跳浏览器 | ✅ 4 路径全通 |
+| 19 | **标签打印规格型号修复**（asset.configuration 空 → asset.brandModel）+ 二维码纯文本 createAssetText() 同步修复 | Ubuntu 部署热更新 + EXE 打包复测 | ✅ 显示品牌型号 |
+| 20 | **深色主题硬编码替换**（4 套主题新增 --note-info/success/warn/danger-* 语义变量；飞书卡片/服务器连接卡片/用户管理页/同步横幅/toast 全部替换） | 纯黑/科技主题切换 + 截面对比 | ✅ 无白底刺眼、白字白底 |
 
 > 第 9 项实测（2026-08-31）：便携 EXE v2.4.5（61.44 MB，asar 含 `connection.html`/`connection-preload.js`）；服务端在线 → exe 旁 `server.config.json` 启动即直连 `:3456`；Ctrl+Alt+S（SetForegroundWindow + SendKeys 发送 OS 级按键）拉起设置窗口；`connApi.get` 初始态 `{mode:null, appSettingExists:false, fileConfigExists:true}`；`connApi.test('http://127.0.0.1:3456')` 返回"连接成功"；`save` 写入 `%APPDATA%\asset-management-system\connection.json`；`apply` 触发 `app.relaunch()` 重启（PID 切换验证）后仍直连 `:3456`，`get` 显示 `appSettingExists:true`（应用内设置优先级生效）；删除配置文件 + `clear` + 重启 → 内嵌服务随机端口（:1366）加载 `index.html`，单机数据目录 `%APPDATA%\asset-management-system\data\` 正常落盘。
 
@@ -69,9 +74,10 @@
 
 | 文档 | 读者 | 用途 |
 | --- | --- | --- |
-| CS架构部署文档.md (v2.8) | 系统管理员 | 部署、迁移、备份、运维、FAQ（12 章 + 4 附录） |
+| CS架构部署文档.md (v3.2) | 系统管理员 | 部署、迁移、备份、运维、FAQ（12 章 + 4 附录） |
 | CS架构改造变更摘要.md | 研发/评审 | 分阶段变更明细 + 14 项关键修复记录 |
-| README.md (v3.2) | 全体 | 运行形态、快速开始、开发指南、故障排查 |
+| README.md (v3.5) | 全体 | 运行形态、快速开始、开发指南、故障排查；v3.5 含单机内嵌 asset-server、飞书同步、打印修复 |
+| 飞书同步配置指南.md | 使用者 | 3 步配置飞书多维表格双向同步 |
 | 本文档 | 项目管理/交接 | 收口确认 |
 
 ---

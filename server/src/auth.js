@@ -29,13 +29,22 @@ function getUserById(id) {
     return db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(id);
 }
 
-/** 鉴权中间件: 校验 JWT, 注入 ctx.state.user { uid, username, role } */
+/** 鉴权中间件: 校验 JWT(或内嵌免密 token), 注入 ctx.state.user { uid, username, role } */
 function authMiddleware() {
     return async (ctx, next) => {
         const header = (ctx.headers['authorization'] || '').toString();
         const legacy = (ctx.headers['x-server-token'] || '').toString();
         const token = header.replace(/^Bearer\s+/i, '').trim() || legacy.trim();
         if (!token) throw ERR.UNAUTHORIZED('缺少登录凭证, 请先登录');
+
+        // 内嵌免密模式: Electron 桌面版单机, X-Server-Token 与启动时约定值一致 → 直接视为管理员
+        if (config.EMBEDDED_TOKEN && legacy.trim() === config.EMBEDDED_TOKEN) {
+            const admin = db.prepare("SELECT id, username, role FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+            if (!admin) throw ERR.UNAUTHORIZED('系统未初始化');
+            ctx.state.user = admin;
+            return next();
+        }
+
         let payload;
         try {
             payload = jwt.verify(token, config.JWT_SECRET);

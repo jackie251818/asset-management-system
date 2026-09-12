@@ -92,7 +92,17 @@ const ApiClient = {
     /** 等待探测完成 */
     ready() { return this._readyPromise || Promise.resolve(false); },
 
-    isLoggedIn() { return !!this.token; },
+    /**
+     * 内嵌免密模式(Electron 桌面版单机):
+     *   服务端为内嵌进程时 /api/info 返回 cs:true + embedded:true, 页面被注入 window.__SERVER_TOKEN__。
+     *   此模式等同管理员已登录(无需 JWT), 请求统一带 X-Server-Token。
+     */
+    isLoggedIn() { return this.embeddedMode || !!this.token; },
+
+    /** 内嵌模式的一次性 token(页面注入) */
+    _embeddedToken() {
+        return (typeof window !== 'undefined' && window.__SERVER_TOKEN__) ? window.__SERVER_TOKEN__ : null;
+    },
 
     _saveAuth() {
         try {
@@ -108,7 +118,13 @@ const ApiClient = {
     async request(method, url, body) {
         const headers = {};
         if (body !== undefined) headers['Content-Type'] = 'application/json';
-        if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+        if (this.embeddedMode) {
+            // 内嵌免密模式: 用注入的一次性 token, 不发 JWT
+            const et = this._embeddedToken();
+            if (et) headers['X-Server-Token'] = et;
+        } else if (this.token) {
+            headers['Authorization'] = 'Bearer ' + this.token;
+        }
 
         let resp;
         try {
@@ -129,13 +145,13 @@ const ApiClient = {
         if (resp.status === 401) {
             // 登录接口的 401 = 用户名或密码错误(凭证错误), 不是会话过期 — 保留服务端原始消息
             const isLoginReq = /\/api\/auth\/login/.test(url);
-            if (!isLoginReq) {
+            if (!isLoginReq && !this.embeddedMode) {
                 this._handleUnauthorized();
                 const err = new Error('登录已过期，请重新登录');
                 err.code = 40100;
                 throw err;
             }
-            const err = new Error((payload && payload.message) || '用户名或密码错误');
+            const err = new Error((payload && payload.message) || (isLoginReq ? '用户名或密码错误' : '凭证无效'));
             err.code = (payload && payload.code) || 40100;
             throw err;
         }

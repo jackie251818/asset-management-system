@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v3.0（服务端 v1.0.0；新增 v3.4 客户端改动：系统设置页服务器连接卡片 + mainWindow preload 注入 + 用户自助改密码；保留 v2.9 全部内容：源码部署前端文件缺失风险说明 + 客户端模式 HTTP 404 预检/拦截增强；7.3 客户端接入含应用内连接设置、服务端信息面板与数据手动双向同步） |
+| 文档版本 | v3.2（服务端 v1.0.0；新增 7.3 EXE 客户端切换服务器踩坑（userData 目录名 / BOM / server.config.json 检测） + 11.12 注意事项 #17-#19；保留 v3.1 全部内容：11.3 V8 字节码跨平台 + 11.4 源码部署编译工具链 + 11.7 nginx 完整部署教程 + 11.12 #14-#16；v3.0 v3.4 客户端改动 + 源码部署前端文件缺失风险 + HTTP 404 预检/拦截增强；7.3 客户端接入含应用内连接设置、服务端信息面板与数据手动双向同步） |
 | 架构形态 | 客户端/服务端（C/S），服务端内嵌 SQLite 数据库 |
 | 适用系统 | Windows 10 / 11 / Windows Server 2016+；Linux x64（Ubuntu 20.04+/Debian 11+/RHEL 9+，见第 11 章）；CentOS 7 专用方案见第 12 章 |
 | 维护要求 | 服务端需固定内网 IP 或 DHCP 保留地址 |
@@ -636,12 +636,56 @@ Content-Type: application/json
 
 > 旧单机便携版可继续独立使用，两者数据互不影响（单机版数据如需并入服务端，推荐走本节"数据同步 → 本地 → 服务器（推送）"界面化操作；大批量场景可用第 4.6 节迁移工具）。
 
+> **⚠️ EXE 客户端切换服务器踩坑（2026-09-03 验证，IP .251 → .247 迁移）**
+>
+> 将已配置过的 EXE 从旧服务器切换到新服务器时，遇到三个连环问题：
+>
+> **问题 1：userData 目录名不是中文**
+>
+> Electron 的 `app.getPath('userData')` 返回 `%APPDATA%\<package.json 的 name 字段>`。本项目的 name 是 `asset-management-system`（英文），因此 connection.json 的正确路径是：
+>
+> ```
+> %APPDATA%\asset-management-system\connection.json
+> ```
+>
+> 而不是 `%APPDATA%\固定资产管理系统\connection.json`（中文名目录不存在或不被读取）。如果手动创建配置文件时写错目录名，EXE 不会读取到配置，静默回落单机模式。
+>
+> **问题 2：PowerShell Set-Content 的 UTF-8 BOM 导致 JSON.parse 失败**
+>
+> 用 PowerShell 的 `Set-Content -Encoding UTF8` 写 connection.json 时，会写入 UTF-8 BOM（`EF BB BF`）。Node.js `fs.readFileSync(p, 'utf-8')` 保留 BOM 字符 `\uFEFF`，`JSON.parse('\uFEFF{...}')` 抛出 `SyntaxError: Unexpected token \uFEFF`。EXE 的 `readUserConnection()` 捕获异常后返回 `{ mode: 'invalid' }`，`resolveServerConfig()` 将其判为 `invalid` → 弹出"连接服务器设置"窗口而非直接连接。
+>
+> **正确写法（无 BOM）**：
+>
+> ```powershell
+> $json = '{"mode":"client","serverUrl":"http://192.168.40.247","savedAt":"2026-09-03T16:06:00.000Z"}'
+> [System.IO.File]::WriteAllText("$env:APPDATA\asset-management-system\connection.json", $json, [System.Text.UTF8Encoding]::new($false))
+> ```
+>
+> 或用 `node -e` 写入（天然无 BOM）：
+>
+> ```bash
+> node -e "require('fs').writeFileSync(process.env.APPDATA+'/asset-management-system/connection.json', JSON.stringify({mode:'client',serverUrl:'http://192.168.40.247',savedAt:new Date().toISOString()}))"
+> ```
+>
+> **问题 3：server.config.json 可能不被检测**
+>
+> 便携 EXE（electron-builder `portable` 目标）运行时提取到临时目录后启动，`getExeDir()` 依赖 `process.env.PORTABLE_EXECUTABLE_DIR`（由 portable 包装器注入）定位原始 EXE 目录。如果该环境变量未注入（某些打包配置或非标准启动方式），`getExeDir()` 回退到 `path.dirname(app.getPath('exe'))`，指向临时目录而非 EXE 所在目录，server.config.json 不会被检测到。
+>
+> **推荐**：生产环境用**方式一（应用内设置）**配置 C/S 模式，不依赖 server.config.json。界面操作保存的 connection.json 天然无 BOM（`writeFileAtomic` 写入），路径正确（`app.getPath('userData')` 自动解析）。手动预配置场景用上述无 BOM 写法。
+>
+> **迁移服务器的正确步骤**：
+>
+> 1. 关闭 EXE
+> 2. 更新 `%APPDATA%\asset-management-system\connection.json`（无 BOM，指向新服务器 URL）
+> 3. 启动 EXE → 自动加载新服务器登录页
+> 4. 或更简单：启动 EXE → Alt → 设置 → 连接服务器设置 → 输入新地址 → 保存并重启
+
 ### 7.4 兼容层（过渡期，当前可用）
 
 新服务端实现了旧版薄 API 兼容层（`/api/load`、`/api/save`、`/api/list`、`/api/ping`、`/api/delete`、`/api/info`、`/api/data-version`），契约与旧版完全一致：
 
 - 读接口鉴权策略（2026-09-03 起精确化）：`GET /api/ping`、`GET /api/info`、`GET /api/list` 全量免鉴权；`GET /api/load` **仅公开键免鉴权**——`key=systemSettings`（登录页动态系统名称）与 `key=custom_options_*`（下拉选项），其余键（如 `assetManagementData` 资产数据、`asset_userStateData_*` 用户状态）仍必须携带 JWT，否则 401；
-- `POST/DELETE` 写接口需要 JWT（`Authorization: Bearer` 或 `X-Server-Token` 头均可）；写接口的键名还受 compat 层白名单约束（`KV_KEYS` 精确名单 + `asset_userStateData_` 前缀匹配）；
+- `POST/DELETE` 写接口需要 JWT（`Authorization: Bearer` 或 `X-Server-Token` 头均可）；写接口的键名还受 compat 层白名单约束（`KV_KEYS` 精确名单含 `userStateData`/`systemSettings`/`backupHistory`/`assetCardTemplate`/`analyzedExcelFormats`/`inventory_sessions`，前缀匹配 `asset_userStateData_`/`inventory_session_`）；**例外**：盘点键（`inventory_sessions` 与 `inventory_session_*`）对所有已登录用户放行写入/删除，含 viewer 只读角色（资产盘点功能要求 viewer 可参与），操作记 `inventory.save`/`inventory.delete` 审计日志；
 - 旧前端切换到新服务端只需：登录获取 token → 注入 `window.__SERVER_TOKEN__`。
 
 ---
@@ -835,6 +879,22 @@ systemctl status asset-server          # active (running)
 curl http://127.0.0.1:3456/api/ping
 ```
 
+> **⚠️ 2026-09-03 实测踩坑：V8 字节码跨平台不兼容（方式 A 在 Windows 交叉打包→Linux 运行失败）**
+>
+> 在 Windows 开发机上执行 `npm run build:linux` 交叉打包的 `asset-server-linux`，上传到 Ubuntu 22.04 运行时报错：
+>
+> ```
+> Error: [pkg] V8 rejected the bytecode cache for /snapshot/.../server/src/index.js.
+> This usually means the binary was built with mismatched host/target V8 (cross-platform bytecode).
+> Rebuild pkg with --public-packages "*" --public or --sea to avoid bytecode.
+> ```
+>
+> **根因**：`@yao-pkg/pkg` 默认将 JS 编译为 V8 字节码嵌入二进制，但 Windows 端 V8 与 Linux 端 V8 字节码格式不兼容（即便 `--targets node22-linux-x64` 指定了目标平台，字节码仍按宿主 V8 生成）。服务进程启动即崩溃（`status=1/FAILURE`），systemd 反复重启。
+>
+> **解决方案（已验证）**：切换到 **方式 B（源码部署）**，在 Linux 服务器上直接 `npm install` + `node src/index.js` 运行，完全绕过字节码问题。详见 11.4。
+>
+> **方式 A 可修复方向（如需免 Node 部署）**：在 **Linux 开发机**上执行 `npm run build:linux`（非 Windows 交叉打包），或在 `package.json` 的 `pkg` 配置中加 `"bytecode": false` 后重新打包（产物体积增大但无字节码兼容问题）。
+
 ### 11.4 方式 B：源码部署
 
 ```bash
@@ -855,6 +915,8 @@ sudo mv /tmp/js /opt/asset-server/
 sudo mv /tmp/libs /opt/asset-server/
 
 # ③ 安装依赖 + 权限
+#    ★ better-sqlite3 是原生模块, 需编译工具链 (make/g++/python3)
+sudo apt install -y build-essential python3       # Ubuntu/Debian; RHEL 系用 dnf groupinstall "Development Tools" && dnf install python3
 cd /opt/asset-server/server
 sudo npm install --omit=dev                       # 以 root 装依赖(装完统一 chown)
 sudo chown -R asset:asset /opt/asset-server
@@ -893,6 +955,16 @@ sudo -u asset node backup.js
 > **验证方法**：部署后在服务器本机执行 `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:3456/login.html`，预期 **200**；如果返回 **404**，说明前端文件没传对位置（应该在 `/opt/asset-server/`，不是 `/opt/asset-server/server/`）。**方式 A 打包产物无此问题**——pkg 的 `package.json` assets 字段已声明把前端文件嵌入 `asset-server-linux` 可执行文件。
 >
 > **修复已验证（2026-09-01，IP 192.168.40.251）**：首次部署时只传了 `server/` 源码目录，导致 API 正常（`/api/info` 200）但静态全挂（`/login.html` 404）。用 WinSCP/pscp 补传上述 6 个根目录文件 + `js/` + `libs/` 到 `/opt/asset-server/` 并 `chown asset:asset` 后，无需重启 Node 进程（serveStatic 每次请求实时读磁盘），立即全部 **HTTP 200**：login.html 14,588 B / index.html 77,752 B / styles.css 53,438 B / js/init.js 18,925 B / libs/chart.min.js 208,353 B。
+
+> **✅ 源码部署完整验证（2026-09-03，IP 192.168.40.247，Ubuntu 22.04 + Node 22.23.2）**：因方式 A 打包产物存在 V8 字节码跨平台不兼容问题（见 11.3 踩坑），切换为方式 B 源码部署。关键步骤与验证结果：
+>
+> 1. `useradd -r -s /usr/sbin/nologin asset` 创建专用用户；`mkdir -p /opt/asset-server/data`
+> 2. Windows 端用 `tar` 打包项目文件（排除 node_modules/dist/deploy/data/tests），`pscp` 上传到服务器 `/tmp/`
+> 3. `apt install -y build-essential python3` 安装编译工具链（better-sqlite3 原生模块需要 make + g++ + python3）
+> 4. `npm install --omit=dev` 安装依赖，better-sqlite3 自动下载预编译二进制或本地编译（耗时约 1 分钟）
+> 5. systemd 单元改为源码模式：`ExecStart=/usr/bin/node /opt/asset-server/server/src/index.js`，`WorkingDirectory=/opt/asset-server/server`
+> 6. 启动后 38 项 API 全面验证全部通过：鉴权白名单 / 登录 / systemSettings 读写（value 字段）/ 资产 CRUD（含乐观锁 409）/ 用户管理（viewer 403 权限拦截）/ X-Server-Token 兼容 / 前端 20 个静态文件 200 / HTTPS 完整链路 / data-version 指纹
+> 7. 浏览器 UI 全流程验证：login.html 模式选择 → C/S 登录 → index.html 主界面渲染 → 控制面板 / 资产列表 / 系统设置页全部正常，系统设置页显示"✅ 服务器模式"
 
 ### 11.5 systemd 服务管理
 
@@ -994,6 +1066,123 @@ sudo nginx -t && sudo systemctl reload nginx
 # 客户端消除"不信任"告警: 将 server.crt 下发并导入受信任的根证书颁发机构
 ```
 
+**完整部署教程（2026-09-03 已验证，IP 192.168.40.247，Ubuntu 22.04）**
+
+以下为从零配置 nginx + 自签证书 + 防火墙的完整步骤，假设 asset-server 服务已按 11.3/11.4 部署完成并监听 `127.0.0.1:3456`。
+
+```bash
+# ============================================================
+# 步骤 1: 安装 nginx
+# ============================================================
+sudo apt install -y nginx          # Ubuntu/Debian; RHEL 系用 sudo dnf install nginx
+
+# ============================================================
+# 步骤 2: 生成自签证书 (SAN 覆盖 localhost/主机名/内网IP, 有效期 10 年)
+# ============================================================
+sudo mkdir -p /etc/nginx/cert
+# ★ 把 192.168.40.247 换成你服务器的内网 IP (可多写几个, 用逗号分隔)
+sudo openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
+  -keyout /etc/nginx/cert/server.key -out /etc/nginx/cert/server.crt \
+  -subj "/CN=asset-server" \
+  -addext "subjectAltName=DNS:localhost,DNS:$(hostname),IP:127.0.0.1,IP:192.168.40.247"
+sudo chmod 600 /etc/nginx/cert/server.key
+sudo chmod 644 /etc/nginx/cert/server.crt
+
+# ============================================================
+# 步骤 3: 写入 nginx 站点配置 (HTTP 80 + HTTPS 443 反向代理)
+# ============================================================
+# 移除默认站点避免 80 端口冲突
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# HTTP 80 → 反代到 127.0.0.1:3456
+sudo tee /etc/nginx/conf.d/asset.conf > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name _;
+    client_max_body_size 64m;
+    location / {
+        proxy_pass http://127.0.0.1:3456;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+EOF
+
+# HTTPS 443 → 反代到 127.0.0.1:3456
+sudo tee /etc/nginx/conf.d/asset-ssl.conf > /dev/null <<'EOF'
+server {
+    listen 443 ssl;
+    server_name _;
+    ssl_certificate     /etc/nginx/cert/server.crt;
+    ssl_certificate_key /etc/nginx/cert/server.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    client_max_body_size 64m;
+    location / {
+        proxy_pass http://127.0.0.1:3456;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+EOF
+
+# ============================================================
+# 步骤 4: 测试配置并启动 nginx
+# ============================================================
+sudo nginx -t                      # 语法检查 → "syntax is ok"
+sudo systemctl enable nginx        # 开机自启
+sudo systemctl restart nginx
+
+# ============================================================
+# 步骤 5: 配置 ufw 防火墙 (★ 必须先放 SSH 再 enable)
+# ============================================================
+sudo ufw allow OpenSSH             # ★ 先放 SSH 防止自锁
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp              # HTTP
+sudo ufw allow 443/tcp             # HTTPS
+sudo ufw --force enable            # --force 跳过交互确认
+sudo ufw status verbose            # 确认规则
+
+# ============================================================
+# 步骤 6: 验证 (本机 + 远程)
+# ============================================================
+# 本机验证 (经 nginx)
+curl -o /dev/null -w '%{http_code}' http://127.0.0.1/api/ping        # → 200
+curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1/api/ping   # → 200
+curl -o /dev/null -w '%{http_code}' http://127.0.0.1/login.html      # → 200
+
+# 远程验证 (从客户端机器)
+curl -o /dev/null -w '%{http_code}' http://192.168.40.247/api/ping    # → 200
+curl -sk -o /dev/null -w '%{http_code}' https://192.168.40.247/api/ping # → 200
+
+# HTTPS 登录验证
+curl -sk -X POST https://192.168.40.247/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}'                    # → {"success":true,"data":{"token":...}}
+```
+
+**访问地址**：
+- HTTP：`http://<服务器IP>`（80 端口，经 nginx 反代）
+- HTTPS：`https://<服务器IP>`（443 端口，自签证书首次访问点"继续浏览"）
+- 直连（调试用）：`http://<服务器IP>:3456`（需将 systemd 单元 `ASSET_HOST` 改为 `0.0.0.0` 并放行 3456）
+
+**证书分发**：自签证书浏览器会告警"不安全"。消除方法：将 `/etc/nginx/cert/server.crt` 下发给客户端，导入"受信任的根证书颁发机构"（Windows：双击 crt → 安装证书 → 本地计算机 → 受信任的根证书颁发机构）。
+
+**日常管理命令**：
+```bash
+sudo systemctl status nginx              # 状态
+sudo systemctl restart nginx            # 重启（改配置后）
+sudo nginx -t                           # 配置语法检查
+sudo nginx -s reload                    # 热重载（不中断连接）
+sudo nssm restart nginx 2>/dev/null || sudo systemctl restart nginx  # 通用重启
+journalctl -u nginx -f                  # 实时日志
+```
+
 **SELinux 注意（仅 RHEL/Rocky/Alma enforcing 模式）**：nginx 反代后端出现 502 而后端直连正常时，放行网络连接布尔值：
 
 ```bash
@@ -1083,6 +1272,12 @@ sudo systemctl start asset-server && sudo bash verify-linux.sh
 | 11 | 日志增长 | journald 建议限额 `SystemMaxUse=200M`（见 11.5），避免长期运行占满磁盘 |
 | 12 | 内存/swap | ≥2GB 内存；1GB 小机建议加 2G swap（`fallocate` + `mkswap`）防编译/导入时 OOM |
 | 13 | 升级窗口 | 升级仅需 stop→替换→start（秒级），数据目录始终不动；先备份再升级 |
+| 14 | **V8 字节码跨平台** | Windows 交叉打包的 `asset-server-linux` 在 Linux 运行报字节码不兼容（见 11.3 踩坑）；改用源码部署，或在 Linux 开发机上打包 |
+| 15 | **源码部署编译工具链** | `npm install` 需 better-sqlite3 原生模块编译，须先 `apt install -y build-essential python3`（见 11.4 步骤 ③） |
+| 16 | nginx 默认站点冲突 | `apt install nginx` 后 `/etc/nginx/sites-enabled/default` 占用 80 端口，需 `rm -f` 移除（见 11.7 步骤 3） |
+| 17 | **EXE userData 目录名** | Electron userData 目录名取 `package.json` 的 `name` 字段（`asset-management-system`，英文），非中文产品名。手动写 connection.json 时路径必须用 `%APPDATA%\asset-management-system\`（见 7.3 踩坑问题 1） |
+| 18 | **connection.json BOM 致 JSON.parse 失败** | PowerShell `Set-Content -Encoding UTF8` 写 BOM（`EF BB BF`），Node.js `JSON.parse` 抛异常，配置被判 invalid。用 `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))` 或 `node -e` 写入（见 7.3 踩坑问题 2） |
+| 19 | **server.config.json 检测不可靠** | 便携 EXE 提取到临时目录启动时，`PORTABLE_EXECUTABLE_DIR` 环境变量可能未注入，导致 server.config.json 不被检测。生产环境优先用应用内设置（界面操作保存 connection.json，天然无 BOM + 路径正确）（见 7.3 踩坑问题 3） |
 
 ### 11.13 验证清单
 
@@ -1105,6 +1300,70 @@ sudo bash verify-linux.sh                       # 建议以 root/sudo 运行以�
 | nginx 探活 | `curl http://127.0.0.1/api/ping` | 返回含 `"pong"` |
 | HTTPS 探活 | `curl -k https://<域名或IP>/api/ping`（自签加 `-k`） | 返回含 `"pong"` |
 | 数据库文件 | `ls -la /opt/asset-server/data/asset.db` | 存在且数据目录可写 |
+
+### 11.14 前端热更新（改前端不用重启服务）
+
+源码部署下静态文件由服务端**每次请求实时读磁盘**（`serveStatic`），更新前端无需重启 `asset-server`：
+
+```bash
+# 从开发机上传改动的前端文件（Windows PowerShell，PuTTY 自带 pscp/plink）
+pscp -pw <密码> index.html styles.css user@<服务器IP>:/tmp/
+pscp -pw <密码> -r js user@<服务器IP>:/tmp/
+# 服务器上移动到部署目录并修正属主
+sudo mv /tmp/index.html /tmp/styles.css /opt/asset-server/
+sudo rm -rf /opt/asset-server/js && sudo mv /tmp/js /opt/asset-server/
+sudo chown -R asset:asset /opt/asset-server/index.html /opt/asset-server/styles.css /opt/asset-server/js
+# 验证（无需 restart；客户端 Ctrl+Shift+R 强刷跳过缓存）
+curl -s http://127.0.0.1:3456/index.html | grep -c "新内容特征字符串"
+```
+
+> **方式 A（pkg 单文件）更新前端**：v3.5 起支持"EXE 同级目录文件优先于内嵌快照"——把前端文件放到 `asset-server-linux` 同级目录即覆盖内嵌版本，无需重打 EXE。
+
+##### 11.14.1 实战热更新日志（IP 192.168.40.247，Ubuntu 22.04）
+
+| 日期 | 文件 | 改动说明 | 命令摘要 | 验证 |
+|---|---|---|---|---|
+| 2026-09-04 | `js/print.js` | 打印卡片优先走 IPC（`connApi.printCard()`），浏览器环境 fallback window.open | `pscp js/print.js hmt@247:/tmp/` + `sudo cp + chown` | HTTP 200 · `grep connApi.printCard` ✅ |
+| 2026-09-04 | `js/feishu-sync.js` | 飞书小白引导 + 链接自动解析 + 按钮状态实时禁用 | 同上 | HTTP 200 |
+| 2026-09-04 | `asset_label_print.html` | 规格型号 `asset.configuration` → `asset.brandModel`；`createAssetText()` 二维码纯文本同步修复 | 同上 | HTTP 200 · `grep asset.brandModel` 2次 ✅ · 无 configuration 残留 ✅ |
+| 2026-09-04 | `index.html` | 移除已废弃的 `<script src="final_chart_fix.js">`（功能已被 `js/charts.js` 覆盖） | 同上 | HTTP 200 · `grep final_chart_fix` 无结果 ✅ |
+| 2026-09-09 | `server/src/routes/compat.js` | **资产盘点模块服务端**：KV 白名单加 `inventory_sessions` + `inventory_session_` 前缀；`/api/save` `/api/delete` 对盘点键放行 viewer；盘点写/删记审计日志 | `pscp` → `sudo cp` → **`systemctl restart asset-server`**（服务端文件需重启） | `is-active: active` ✅ · 白名单 `grep` 3+4 处 ✅ |
+| 2026-09-09 | `js/inventory.js`（新增） | 资产盘点前端模块（批次 CRUD/扫码/异常/乐观锁/Excel 导出） | `pscp` → `sudo cp` 免重启 | HTTP 200 · 27065 bytes · 含 `renderInventoryPage` ✅ |
+| 2026-09-09 | `js/mobile-bridge.js` | 新增 `scanForInventory()` 循环扫码盘点 + `stopInventoryScan()`；版本号 v1.0.0→v1.1.0 | 同上 | HTTP 200 · 含 `scanForInventory` ✅ |
+| 2026-09-09 | `js/config.js` | STORAGE_KEYS 加 `INVENTORY_SESSIONS`/`INVENTORY_SESSION_ITEM` 常量 | 同上 | MD5 校验匹配 ✅ |
+| 2026-09-09 | `js/navigation.js` | pageHandlers 注册 `'inventory'` 回调 | 同上 | MD5 校验匹配 ✅ |
+| 2026-09-09 | `index.html` | 侧边栏加「资产盘点」菜单 + 盘点页 DOM（4 统计卡/进度条/筛选/3 弹窗/扫码遮罩）+ inventory.js 引用；styles.css 版本号 v3.4.4→v3.4.5 | 同上 | HTTP 200 · 含 `data-target="inventory"` + `js/inventory.js` ✅ |
+| 2026-09-09 | `styles.css` | 追加盘点模块样式（卡片/徽章/行底色/遮罩，全 CSS 变量适配 4 主题） | 同上 | HTTP 200 · 含 `inv-session-card` ✅ |
+
+> **2026-09-09 盘点模块部署要点**：① 部署前自动备份旧文件到 `/tmp/inv-backup-<timestamp>/`；② 7 文件 MD5 本地与远程逐一校验；③ 服务端 compat.js 改后必须 `systemctl restart asset-server`，前端 6 文件免重启；④ 改后 bump index.html 中 `styles.css?v=3.4.5`、`mobile-bridge.js?v=1.1.0` 防浏览器缓存。
+
+**热更新标准流程**（PowerShell）：
+
+```powershell
+# 1. 上传到 /tmp
+pscp -batch -pw <密码> asset_label_print.html index.html js/print.js js/feishu-sync.js hmt@192.168.40.247:/tmp/
+
+# 2. sudo 移到生产目录 + 修正属主
+plink -ssh -batch -pw <密码> hmt@192.168.40.247 `
+  "echo <密码> | sudo -S cp /tmp/asset_label_print.html /opt/asset-server/ && `
+   echo <密码> | sudo -S cp /tmp/index.html /opt/asset-server/ && `
+   echo <密码> | sudo -S mkdir -p /opt/asset-server/js && `
+   echo <密码> | sudo -S cp /tmp/print.js /tmp/feishu-sync.js /opt/asset-server/js/ && `
+   echo <密码> | sudo -S chown asset:asset /opt/asset-server/asset_label_print.html /opt/asset-server/index.html /opt/asset-server/js/print.js /opt/asset-server/js/feishu-sync.js"
+
+# 3. 本机验证（Invoke-WebRequest / curl）
+curl -s http://192.168.40.247/asset_label_print.html | Select-String "asset.brandModel"
+```
+
+> **注意事项**：① 只上传改动文件，不整包覆盖 js/ 目录——避免服务器上可能的临时文件或版本漂移被整体冲掉；② 客户端需 `Ctrl+Shift+R` 强刷跳过浏览器缓存；③ 无需 `systemctl restart asset-server`，Node.js serveStatic 每次请求实时读磁盘。
+
+### 11.15 飞书多维表格同步（C/S 与单机内嵌均可用）
+
+- **功能位置**：系统设置 → "飞书多维表格同步"卡片（C/S 模式 + v2.5.0 桌面单机内嵌模式自动显示；旧精简单机模式无此功能）
+- **配置方法**：见项目根目录 **《飞书同步配置指南.md》**（面向使用者：创建飞书应用 → 开通多维表格权限并发布 → 粘贴链接自动提取 token → 测试连接 → 加载字段自动映射 → 保存 → 推送/拉取）
+- **服务端依赖**：飞书功能在后端 `server/src/feishu-sync.js` + `server/src/routes/feishu.js`，配置存 SQLite `kv_store(feishu_sync_config)`，**服务器必须能访问公网 `open.feishu.cn`**
+- **网络注意**：纯内网隔离服务器无法调通飞书 API；若服务器经代理出公网，需为 systemd 单元配置 `HTTP_PROXY/HTTPS_PROXY` 环境变量后 `daemon-reload && restart`
+- **桌面单机内嵌模式**：v2.5.0+ 便携版单机启动时自动拉起内置 asset-server（127.0.0.1 随机端口 + `ASSET_EMBEDDED_TOKEN` 免密），飞书数据保存在本机 `%APPDATA%\asset-management-system\data\asset.db`，无需部署服务器
 
 ---
 
@@ -1361,7 +1620,7 @@ docker run -d --name asset-server --restart unless-stopped \
 | GET | `/api/ping`、`/api/info`、`/api/list` | 否 | 兼容层探活/元信息/键列表 |
 | GET | `/api/load?key=systemSettings`、`/api/load?key=custom_options_*` | 否 | 兼容层读公开键（登录页系统名称/下拉选项，2026-09-03 起放行） |
 | GET | `/api/load?key=`（其余键，如 `assetManagementData`） | 是 | 兼容层读业务数据（旧契约，需 JWT） |
-| POST | `/api/save?key=`、DELETE `/api/delete?key=` | 写角色 | 兼容层写（旧契约；键名须在白名单：`KV_KEYS` 或 `asset_userStateData_` 前缀） |
+| POST | `/api/save?key=`、DELETE `/api/delete?key=` | 写角色 | 兼容层写（旧契约；键名须在白名单：`KV_KEYS` 含 `inventory_sessions`，或前缀 `asset_userStateData_`/`inventory_session_`）。**盘点键例外**：`inventory_sessions` 与 `inventory_session_*` 对所有登录用户（含 viewer）放行，记审计日志 |
 
 统一成功格式 `{code:0,message:"ok",data}`（兼容层 `load/save` 为旧契约 `{success,data}`）；错误返回 `{code,message}`，HTTP 状态码同步设置。
 

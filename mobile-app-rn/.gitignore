@@ -1,0 +1,32 @@
+# React Native 构建产物与本地环境（源码与预构建 gradle 插件 jar 需提交）
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+*.apk
+*.aab
+
+# Metro 产物（按构建说明可重新生成）
+android/app/src/main/assets/index.android.bundle
+android/app/src/main/res/drawable-hdpi/
+android/app/src/main/res/drawable-mdpi/
+android/app/src/main/res/drawable-xhdpi/
+android/app/src/main/res/drawable-xxhdpi/
+android/app/src/main/res/drawable-xxxhdpi/
+android/app/src/main/res/raw/
+
+# 本地 SDK 路径（每台机器不同）
+android/local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store

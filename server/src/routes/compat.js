@@ -29,9 +29,9 @@ function raw(ctx, body, status = 200) {
     ctx.body = body;
 }
 
-const KV_KEYS = ['userStateData', 'systemSettings', 'backupHistory', 'assetCardTemplate', 'analyzedExcelFormats'];
-/** 允许的 key 前缀(匹配 userId 后缀的用户独立状态等) */
-const KV_PREFIXES = ['asset_userStateData_'];
+const KV_KEYS = ['userStateData', 'systemSettings', 'backupHistory', 'assetCardTemplate', 'analyzedExcelFormats', 'inventory_sessions'];
+/** 允许的 key 前缀(匹配 userId 后缀的用户独立状态等; inventory_session_ 前缀为盘点批次明细) */
+const KV_PREFIXES = ['asset_userStateData_', 'inventory_session_'];
 const OPTION_KINDS = { owner: 'owner', type: 'type', department: 'department' };
 const OPTION_KEYS = ['custom_options_owner', 'custom_options_type', 'custom_options_department',
     'custom_options_owner_deleted', 'custom_options_type_deleted', 'custom_options_department_deleted'];
@@ -65,6 +65,8 @@ router.get('/info', async (ctx) => {
         name: '固定资产管理系统服务端',
         /** C/S 架构标识: 前端据此启用登录守卫与 REST 直连模式 */
         cs: true,
+        /** Electron 桌面版内嵌免密模式标识(与 cs 同时出现时前端免登录、X-Server-Token 鉴权) */
+        embedded: !!config.EMBEDDED_TOKEN,
         version: config.VERSION,
         dbPath: config.DB_PATH,
         serverTime: new Date().toISOString(),
@@ -151,9 +153,13 @@ const replaceOptions = (kind, active, deleted) => db.transaction(() => {
 })();
 
 router.post('/save', async (ctx) => {
-    requireWrite(ctx);
     const key = String(ctx.query.key || (ctx.request.body && ctx.request.body.key) || '').trim();
     if (!key) throw ERR.BAD_REQUEST('缺少 key 参数');
+    // 盘点键: 所有已登录用户(含 viewer 只读角色)均可写
+    const isInventoryKey = key === 'inventory_sessions' || key.startsWith('inventory_session_');
+    if (!isInventoryKey) {
+        requireWrite(ctx);
+    }
     const value = ctx.request.body && ctx.request.body.value;
 
     if (key === 'assetManagementData') {
@@ -192,17 +198,35 @@ router.post('/save', async (ctx) => {
     db.prepare(`INSERT INTO kv_store (key, value_json, updated_at) VALUES (?, ?, datetime('now','localtime'))
         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
         .run(key, JSON.stringify(value === undefined ? null : value));
+    // 盘点键写入审计
+    if (isInventoryKey) {
+        try {
+            db.prepare('INSERT INTO audit_log (username, action, target, detail) VALUES (?, ?, ?, ?)')
+                .run(ctx.state.user.username, 'inventory.save', key,
+                     JSON.stringify(value).substring(0, 200));
+        } catch (e) { /* 审计失败不影响主流程 */ }
+    }
     raw(ctx, { success: true, saved: true });
 });
 
 router.delete('/delete', async (ctx) => {
-    requireWrite(ctx);
     const key = String(ctx.query.key || '').trim();
     if (!key) throw ERR.BAD_REQUEST('缺少 key 参数');
+    // 盘点键: 所有已登录用户(含 viewer 只读角色)均可删
+    const isInventoryKey = key === 'inventory_sessions' || key.startsWith('inventory_session_');
+    if (!isInventoryKey) {
+        requireWrite(ctx);
+    }
     if (key === 'assetManagementData') throw ERR.BAD_REQUEST('不允许通过兼容接口删除资产全量数据');
     if (OPTION_KEYS.includes(key)) throw ERR.BAD_REQUEST('请使用 /api/options 接口维护选项');
     if (!isAllowedKvKey(key)) throw ERR.NOT_FOUND(`数据键不存在: ${key}`);
     db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
+    if (isInventoryKey) {
+        try {
+            db.prepare('INSERT INTO audit_log (username, action, target, detail) VALUES (?, ?, ?, ?)')
+                .run(ctx.state.user.username, 'inventory.delete', key, null);
+        } catch (e) { /* 审计失败不影响主流程 */ }
+    }
     raw(ctx, { success: true, deleted: true });
 });
 

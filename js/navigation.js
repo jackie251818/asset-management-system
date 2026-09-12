@@ -128,6 +128,12 @@ function switchPage(pageName) {
             if (typeof renderUsersList === 'function') {
                 renderUsersList();
             }
+        },
+        'inventory': function() {
+            // 资产盘点页: 所有登录用户可见, 切入时刷新批次列表
+            if (typeof renderInventoryPage === 'function') {
+                renderInventoryPage();
+            }
         }
     };
     
