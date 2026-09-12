@@ -315,7 +315,7 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 
 ## 版本历史
 
-- **v3.7** (2026-09-12) — React Native 原生 App 重建 + 飞书数据表选择器：
+- **v3.7.0** (2026-09-12) — React Native 原生 App 重建 + 飞书数据表选择器（[GitHub Release](https://github.com/jackie251818/asset-management-system/releases/tag/v3.7.0)，APK 资产 `asset-mgmt-rn-v3.7.apk`）：
   - **手机 App 原生重建**：废弃并删除旧 Capacitor WebView 套壳工程（`mobile-app/`，6.2 MB），按 **[ReactNative重建方案.md](ReactNative重建方案.md)** 新建 `mobile-app-rn/`（RN 0.75.4 + TypeScript，旧架构 + Hermes）；React Navigation 四 Tab（首页/资产/盘点/我的）+ Stack，Zustand + MMKV 持久化，四套主题；JS bundle 内置 APK 可离线运行；APK 约 200 MB（四架构 + MLKit 模型），托管于 `http://192.168.40.247/downloads/`
   - **原生扫码（VisionCamera v4 + MLKit）**：`useCameraDevice('back')` + `useCodeScanner`（v4 已移除 frame processor 式 scanBarcodes），root build.gradle 开启 `VisionCamera_enableCodeScanner`；扫码交互改"**一码一确认**"——扫到即暂停相机、底部弹出资产信息卡、人工点「确认盘点」才标记已盘，解决对准后连续重复计数
   - **联调修复（v1→v8 共 8 版）**：后端 `{code,data}` 响应解包导致的 MMKV 写入类型错误、RootNavigator MainTabs 标识符错误、盘点空数据 404 容错、MaterialCommunityIcons.ttf 未打包导致全图标方框；构建链解决中文路径（subst R 盘）、native_modules.gradle 管道死锁、foojay 自动下载卡死、mmkv 3.x 不支持旧架构等问题；发布流程固化为工作区技能 `rn-apk-deploy`（说"发布"自动 bundle→gradle→pscp 部署）
@@ -323,7 +323,7 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
   - **生产热更新**：`server/src/feishu-sync.js`、`server/src/routes/feishu.js`、`index.html`、`js/feishu-sync.js` 部署至 192.168.40.247 并重启 asset-server；临时修复失效默认表（选定字段全匹配的"花满堂"表）
   - 文档：重写 [手机App构建说明.md](手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](飞书同步配置指南.md)
 
-- **v3.6** (2026-09-09) — 资产盘点模块 + Android 手机 App（**App 部分已被 v3.7 RN 原生版取代**）：
+- **v3.6** (2026-09-09) — 资产盘点模块 + Android 手机 App（**App 部分已被 v3.7.0 RN 原生版取代**）：
   - **资产盘点模块**：新增侧边栏「资产盘点」菜单；支持发起盘点批次（全部/按部门/按地点）、扫码盘点（手机 App 原生相机循环扫码）+ 列表勾选盘点双模式；每条资产标记 已盘/未盘到/异常（异常弹窗填备注）；实时进度条 + 4 统计卡（应盘/已盘/未盘到/异常）；筛选 + 搜索；完成后导出 Excel 报告（明细 + 汇总双 sheet）；多轮历史批次回看；资产快照防后续删改；乐观锁防多人并发覆盖
   - **数据存储**：盘点数据复用 `kv_store` 表（键 `inventory_sessions` 批次列表 + `inventory_session_<id>` 批次明细），经 `/api/save` `/api/load` `/api/delete` 兼容层读写，零基础设施改动
   - **权限放行**：`server/src/routes/compat.js` KV 白名单新增 `inventory_sessions` 与 `inventory_session_` 前缀；`/api/save` `/api/delete` 对盘点键放行 **viewer 只读角色**（所有登录用户均可盘点）；盘点写入/删除记 `inventory.save`/`inventory.delete` 审计日志
