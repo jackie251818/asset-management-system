@@ -17,6 +17,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 /** 主进程调试日志 — 写到文件便于 EXE 内嵌时查看 */
@@ -1280,6 +1282,348 @@ function probeServer(url, timeoutMs = 3500) {
 }
 
 /**
+ * ============ 客户端在线更新模块(仅 C/S 客户端模式) ============
+ * 版本源: 所连 C/S 服务器的 /downloads/client-update.json (静态文件, 服务端零改动)
+ *   { "version": "3.7.1", "url": "...", "notes": "...", "sha256": "...", "publishedAt": "..." }
+ * 流程: 启动 6 秒后静默检查(失败忽略) / 菜单手动检查 → 有新版弹窗询问 →
+ *       下载到临时目录(setProgressBar 进度) → SHA256 校验 → 自替换原 exe → 拉起新版并退出。
+ * 便携版运行时 process.execPath 指向 %TEMP% 解压目录, 原 exe 路径必须用
+ * PORTABLE_EXECUTABLE_FILE(stub 注入的完整路径) 还原(无此环境变量时回退 getPath('exe'))。
+ */
+const UPDATE_CFG = {
+    jsonPath: '/downloads/client-update.json',   // 版本描述文件(相对服务器 origin)
+    exeName: 'asset-mgmt-client.exe',            // 服务器上的固定文件名
+    checkDelayMs: 6000,                          // 客户端窗口加载成功后延迟静默检查
+    checkTimeoutMs: 5000,                        // 版本检查超时
+    downloadTimeoutMs: 120000,                   // 下载空闲超时
+    tmpName: 'asset-mgmt-client.update.exe'      // 临时下载文件名(%TEMP% 下, 启动时清理)
+};
+let updateServerOrigin = null;   // 当前 C/S 服务器 origin; 单机模式为 null → 菜单提示不支持
+let updateRunning = false;       // 更新流程进行中(防重复触发)
+
+/** 原始 exe 完整路径(分发到用户手里的那个 exe) */
+function getOriginalExePath() {
+    // 便携版: stub(portable.nsi) 注入 PORTABLE_EXECUTABLE_FILE = 分发 exe 的完整路径。
+    // 注意不能取 app.getPath('exe') —— 那是 %TEMP% 解压目录里的内部 exe, 替换它会在
+    // 下次启动时被 stub 重新解压覆盖(更新丢失), 且解压目录名确定会引发无限重生循环。
+    if (process.env.PORTABLE_EXECUTABLE_FILE) {
+        return process.env.PORTABLE_EXECUTABLE_FILE;
+    }
+    try { return app.getPath('exe'); } catch (_) { return process.execPath; }
+}
+
+/** 更新调试日志(独立文件, 便于排查用户端更新问题) */
+function updateLog(msg) {
+    console.log('[更新] ' + msg);
+    try { fs.appendFileSync(path.join(os.tmpdir(), 'asset-update.log'), '[' + new Date().toISOString() + '] ' + msg + '\n', 'utf8'); } catch (_) {}
+}
+
+/** 启动清理: 上次自替换残留的 <exe>.old 备份与 %TEMP% 下载临时文件 */
+function cleanupUpdateResidue() {
+    try {
+        const oldPath = getOriginalExePath() + '.old';
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    } catch (_) { /* 上个实例可能仍占用, 下次启动再清 */ }
+    try {
+        const tmp = path.join(os.tmpdir(), UPDATE_CFG.tmpName);
+        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    } catch (_) {}
+}
+
+/** 版本比较: 按 "." 分段数字比较, a>b→1, a<b→-1, 相等→0; 非法输入返回 -2 */
+function compareVersions(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return -2;
+    const pa = a.trim().split('.'), pb = b.trim().split('.');
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i++) {
+        const na = parseInt(pa[i], 10) || 0;
+        const nb = parseInt(pb[i], 10) || 0;
+        if (na > nb) return 1;
+        if (na < nb) return -1;
+    }
+    return 0;
+}
+
+/** GET 一个 JSON(限时), 任何失败返回 null */
+function fetchUpdateJson(origin) {
+    return new Promise((resolve) => {
+        let target;
+        try { target = new URL(origin + UPDATE_CFG.jsonPath); } catch (_) { return resolve(null); }
+        const mod = target.protocol === 'https:' ? https : http;
+        const req = mod.request({
+            method: 'GET',
+            hostname: target.hostname,
+            port: target.port || (target.protocol === 'https:' ? 443 : 80),
+            path: target.pathname + target.search,
+            headers: { 'User-Agent': 'AssetManager-Desktop/1.0', 'Cache-Control': 'no-cache' },
+            timeout: UPDATE_CFG.checkTimeoutMs,
+            rejectUnauthorized: false
+        }, (res) => {
+            if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+            let body = '';
+            res.setEncoding('utf-8');
+            res.on('data', (c) => { body += c; });
+            res.on('end', () => {
+                try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
+            });
+        });
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+        req.on('error', () => resolve(null));
+        req.end();
+    });
+}
+
+/** 下载文件到 destPath(跟随一次重定向), onProgress(0~1), 成功 resolve 实际 URL */
+function downloadUpdateFile(url, destPath, onProgress) {
+    return new Promise((resolve, reject) => {
+        let target;
+        try { target = new URL(url); } catch (_) { return reject(new Error('下载地址无效: ' + url)); }
+        const mod = target.protocol === 'https:' ? https : http;
+        const req = mod.request({
+            method: 'GET',
+            hostname: target.hostname,
+            port: target.port || (target.protocol === 'https:' ? 443 : 80),
+            path: target.pathname + target.search,
+            headers: { 'User-Agent': 'AssetManager-Desktop/1.0' },
+            timeout: UPDATE_CFG.downloadTimeoutMs,
+            rejectUnauthorized: false
+        }, (res) => {
+            // 跟随一次重定向(nginx 直链一般 200, 这里兜底)
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                const next = new URL(res.headers.location, url).toString();
+                return downloadUpdateFile(next, destPath, onProgress).then(resolve, reject);
+            }
+            if (res.statusCode !== 200) { res.resume(); return reject(new Error('下载失败: HTTP ' + res.statusCode)); }
+            const total = parseInt(res.headers['content-length'], 10) || 0;
+            let received = 0;
+            const out = fs.createWriteStream(destPath);
+            out.on('error', reject);
+            res.on('data', (c) => {
+                received += c.length;
+                if (onProgress && total > 0) { try { onProgress(received / total); } catch (_) {} }
+            });
+            res.pipe(out);
+            out.on('finish', () => out.close(() => resolve(url)));
+        });
+        req.on('timeout', () => req.destroy(new Error('下载超时(连接无数据)')));
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+/** 计算文件 SHA256(流式) */
+function sha256File(p) {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const s = fs.createReadStream(p);
+        s.on('data', (d) => hash.update(d));
+        s.on('end', () => resolve(hash.digest('hex')));
+        s.on('error', reject);
+    });
+}
+
+/**
+ * 自替换原 exe 并重启。
+ * 便携版 stub 存活期间持有自身 exe 句柄(EBUSY), 无法运行中改名/覆盖;
+ * 且 stub 退出时的进程树清理会杀掉本应用 spawn 的任何辅助进程(实测 detached 也被杀)。
+ * 因此: 写一个 UTF-16LE 的 .vbs 辅助脚本(规避中文路径编码坑), 通过 explorer.exe
+ * 代为启动(wscript 由外部进程 explorer 创建, 彻底脱离应用进程树)。
+ * 辅助逻辑: 轮询等待原 exe 可写(stub 退出) → 覆盖 → 拉起新版 → 写结果日志。
+ * 失败时原 exe 原样保留(仅丢弃下载临时文件), 旧版可继续使用。
+ */
+function selfReplaceAndRestart(newExePath) {
+    const original = getOriginalExePath();
+    const vbs = [
+        'Dim sh, fso, deadline, ok, orig, tmp, old',
+        'Set sh = CreateObject("WScript.Shell")',
+        'Set fso = CreateObject("Scripting.FileSystemObject")',
+        `orig = "${original}"`,
+        `tmp = "${newExePath}"`,
+        'old = orig & ".old"',
+        'deadline = Now + 30/86400',
+        'ok = False',
+        'On Error Resume Next',
+        'Do While Now < deadline And Not ok',
+        '    Err.Clear',
+        '    If fso.FileExists(old) Then fso.DeleteFile old, True',
+        '    Err.Clear',
+        '    fso.MoveFile orig, old',
+        '    If Err.Number = 0 Then',
+        '        Err.Clear',
+        '        fso.MoveFile tmp, orig',
+        '        If Err.Number = 0 Then',
+        '            ok = True',
+        '        Else',
+        '            fso.MoveFile old, orig',
+        '        End If',
+        '    End If',
+        '    If Not ok Then WScript.Sleep 500',
+        'Loop',
+        'Dim logPath, logStream',
+        'logPath = sh.ExpandEnvironmentStrings("%TEMP%") & "\\asset-update.log"',
+        'Set logStream = fso.OpenTextFile(logPath, 8, True)',
+        'If ok Then',
+        `    sh.Run Chr(34) & "${original}" & Chr(34), 1, False`,
+        '    logStream.WriteLine "[" & Now & "] 替换完成, 已重启新版本"',
+        'Else',
+        '    logStream.WriteLine "[" & Now & "] 替换失败: 30秒内原文件仍被占用, 保留旧版本"',
+        'End If',
+        'logStream.Close'
+    ].join('\r\n');
+    const vbsPath = path.join(os.tmpdir(), 'asset-update-helper.vbs');
+    try {
+        // UTF-16LE + BOM: wscript 依 BOM 识别 Unicode, 中文路径/日志不乱码
+        fs.writeFileSync(vbsPath, '\ufeff' + vbs, 'utf16le');
+    } catch (e) {
+        updateLog('写辅助脚本失败: ' + e.message);
+        throw new Error('无法写更新辅助脚本: ' + e.message);
+    }
+    updateLog('经 explorer 启动替换辅助脚本: ' + vbsPath);
+    try {
+        // explorer 是外部常驻进程, 由它代启 wscript → 新进程不属于本应用进程树, 不会被带走
+        const child = spawn('explorer.exe', [vbsPath], { detached: true, stdio: 'ignore' });
+        child.unref();
+    } catch (e) {
+        updateLog('辅助脚本启动失败: ' + e.message);
+        throw new Error('无法启动替换辅助脚本: ' + e.message);
+    }
+    // 给 explorer 分发一点时间后退出, 让 stub 释放原 exe 文件
+    setTimeout(() => app.exit(0), 1500);
+}
+
+function setUpdateOrigin(origin) { updateServerOrigin = origin || null; }
+
+function getUpdateProgressWindow() {
+    return (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : null;
+}
+
+/** 下载 + 校验 + 替换 + 重启(调用前已确认) */
+async function downloadAndApplyUpdate(info) {
+    const url = /^https?:\/\//i.test(String(info.url || ''))
+        ? String(info.url)
+        : updateServerOrigin + '/downloads/' + UPDATE_CFG.exeName;
+    const tmp = path.join(os.tmpdir(), UPDATE_CFG.tmpName);
+    const win = getUpdateProgressWindow();
+    updateRunning = true;
+    try {
+        updateLog('开始下载: ' + url);
+        if (win) win.setProgressBar(0);
+        await downloadUpdateFile(url, tmp, (frac) => {
+            const w = getUpdateProgressWindow();
+            if (w) w.setProgressBar(Math.min(1, Math.max(0, frac)));
+        });
+        const w2 = getUpdateProgressWindow();
+        if (w2) w2.setProgressBar(-1);
+        updateLog('下载完成: ' + fs.statSync(tmp).size + ' bytes');
+        if (info.sha256) {
+            const actual = await sha256File(tmp);
+            if (actual.toLowerCase() !== String(info.sha256).toLowerCase().trim()) {
+                try { fs.unlinkSync(tmp); } catch (_) {}
+                throw new Error('新版本文件校验失败(SHA256 不匹配), 已取消更新。');
+            }
+            updateLog('SHA256 校验通过');
+        }
+        selfReplaceAndRestart(tmp);
+    } catch (e) {
+        updateRunning = false;
+        const w3 = getUpdateProgressWindow();
+        if (w3) w3.setProgressBar(-1);
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        updateLog('更新失败: ' + e.message);
+        dialog.showMessageBox({
+            type: 'error',
+            title: '更新失败',
+            message: '更新失败',
+            detail: e.message,
+            buttons: ['确定'],
+            noLink: true
+        });
+    }
+}
+
+/** 拿到新版信息后统一走这里: 弹窗询问 → 下载应用 */
+async function promptAndApplyUpdate(info) {
+    if (updateRunning) return;
+    const cur = app.getVersion();
+    const r = await dialog.showMessageBox({
+        type: 'info',
+        title: '发现新版本',
+        message: `发现新版本 v${info.version}(当前 v${cur})`,
+        detail: (info.notes ? String(info.notes) + '\n\n' : '')
+            + '将下载新版本并自动重启应用完成升级。',
+        buttons: ['立即更新', '暂不更新'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+    });
+    if (r.response !== 0) return;
+    await downloadAndApplyUpdate(info);
+}
+
+/** 静默检查(启动后自动触发): 任何失败都不打扰用户 */
+async function silentCheckForUpdate() {
+    if (!app.isPackaged) return;               // dev 环境严禁自替换 electron.exe
+    if (!updateServerOrigin || updateRunning) return;
+    try {
+        const info = await fetchUpdateJson(updateServerOrigin);
+        if (!info || !info.version) return;
+        if (compareVersions(String(info.version), app.getVersion()) > 0) {
+            updateLog(`静默检查发现新版本 ${info.version}(当前 ${app.getVersion()}), 弹窗询问`);
+            await promptAndApplyUpdate(info);
+        } else {
+            updateLog(`静默检查: 已是最新(${app.getVersion()})`);
+        }
+    } catch (_) { /* 静默失败 */ }
+}
+
+/** 手动检查(菜单入口): 有明确结果提示 */
+async function manualCheckForUpdate() {
+    if (!app.isPackaged) {
+        dialog.showMessageBox({ type: 'info', title: '检查更新', message: '开发环境不支持在线更新', buttons: ['确定'], noLink: true });
+        return;
+    }
+    if (!updateServerOrigin) {
+        dialog.showMessageBox({
+            type: 'info',
+            title: '检查更新',
+            message: '当前为单机模式, 不支持在线更新',
+            detail: '在线更新仅在"客户端模式"(连接服务器)下可用。\n可通过菜单"设置 → 连接服务器设置…"切换到客户端模式。',
+            buttons: ['确定'],
+            noLink: true
+        });
+        return;
+    }
+    if (updateRunning) {
+        dialog.showMessageBox({ type: 'info', title: '检查更新', message: '更新正在进行中, 请稍候', buttons: ['确定'], noLink: true });
+        return;
+    }
+    const info = await fetchUpdateJson(updateServerOrigin);
+    if (!info || !info.version) {
+        dialog.showMessageBox({
+            type: 'warning',
+            title: '检查更新',
+            message: '无法获取更新信息',
+            detail: `无法连接更新源: ${updateServerOrigin}${UPDATE_CFG.jsonPath}\n请检查网络连接或稍后重试。`,
+            buttons: ['确定'],
+            noLink: true
+        });
+        return;
+    }
+    if (compareVersions(String(info.version), app.getVersion()) > 0) {
+        await promptAndApplyUpdate(info);
+    } else {
+        dialog.showMessageBox({
+            type: 'info',
+            title: '检查更新',
+            message: `当前已是最新版本 v${app.getVersion()}`,
+            buttons: ['确定'],
+            noLink: true
+        });
+    }
+}
+
+/**
  * 应用菜单:仅一个"连接设置"入口。
  * 菜单栏默认隐藏(Alt 键临时显示), 保证窗口整洁的同时保留应用内切换模式的入口。
  */
@@ -1292,6 +1636,11 @@ function buildAppMenu() {
                     label: '连接服务器设置…',
                     accelerator: 'CmdOrCtrl+Alt+S',
                     click: () => { createConnectionWindow(); }
+                },
+                { type: 'separator' },
+                {
+                    label: '检查更新',
+                    click: () => { manualCheckForUpdate(); }
                 }
             ]
         }
@@ -1743,6 +2092,10 @@ async function createClientWindow(serverConfig) {
     try {
         await mainWindow.loadURL(currentUrl);
     } catch (_) { /* 失败由 did-fail-load / session.webRequest 统一处理 */ }
+
+    // 客户端模式就绪: 记录更新源(服务器 origin), 6 秒后静默检查更新(失败静默忽略)
+    setUpdateOrigin(serverUrl);
+    setTimeout(() => { silentCheckForUpdate(); }, UPDATE_CFG.checkDelayMs);
     return;
 }
 
@@ -1916,6 +2269,8 @@ function killBundledServer() {
  * 单机模式:内置完整服务端(优先) 或 精简内嵌 HTTP 服务器(回退) + 本地数据目录
  */
 async function startStandaloneMode() {
+    // 单机模式没有远程更新源, 菜单"检查更新"将提示不支持
+    setUpdateOrigin(null);
     // 确定数据目录并初始化
     const dataDir = getPortableDataDir();
     console.log(`[应用] 数据目录: ${dataDir}`);
@@ -2014,6 +2369,7 @@ async function startStandaloneMode() {
 
 // Electron 准备就绪后创建窗口
 app.whenReady().then(() => {
+    cleanupUpdateResidue();   // 清理上次自替换/下载中断的残留文件
     registerConnectionIpc();
     createWindow();
 
