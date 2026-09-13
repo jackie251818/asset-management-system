@@ -28,6 +28,9 @@ server/deploy/asset-server.exe
 server/deploy/nginx/
 server/deploy/cert/
 
+# 发布产物本地归档（版本台账进 git 的只有文档发布记录, 二进制只留本地）
+releases/
+
 # 脚本 & 临时文件
 scripts/*.tmp.*
 *.tmp

@@ -11,6 +11,8 @@
 | [CS架构部署文档.md](CS架构部署文档.md) | **核心部署手册**（v3.3）：架构总览、Windows 独立 EXE/服务化部署、Ubuntu/CentOS Linux 部署（systemd + nginx + 自签证书）、数据库初始化/备份/恢复/迁移、防火墙、安全加固清单、日常运维、故障排查 FAQ、前端热更新（11.14）、**EXE 客户端在线自更新（7.5）** | 管理员/运维 |
 | [iStoreOS部署说明.md](iStoreOS部署说明.md) | iStoreOS（OpenWrt 系软路由，x86_64 及 R2S/R4S/R5S 等 ARM 设备）Docker 容器部署方案（node:20 镜像 + SQLite） | 管理员/运维 |
 | [EXE客户端发布更新流程.md](EXE客户端发布更新流程.md) | v3.7.1+ 便携版 EXE 在线自更新机制说明 + **发布新版本的标准 9 步流程**（改版本号→构建→SHA256→生成 client-update.json→pscp 上传→验证→回滚），含 PowerShell 命令模板与故障排查 | 发布人 |
+| [../server/deploy/README.md](../server/deploy/README.md) | **服务端部署文件总目录**（与生产 192.168.40.247 逐文件比对一致）：Ubuntu 源码一键部署脚本、Windows 一键安装、iStoreOS compose 编排、nginx/systemd/证书/防火墙、downloads 更新文件模板、生产布局映射表 | 管理员/运维 |
+| [发布同步规范.md](发布同步规范.md) | **AI 交接必读**：仓库=唯一事实源原则、每次改动收尾必跑 sync-from-prod.ps1 审计同步、发布产物 releases/ 归档、App 包名/签名硬约束、AI 检查单 | 所有 AI 会话/发布人 |
 
 ## 功能与集成
 
@@ -24,6 +26,8 @@
 | 文档 | 内容 | 适用读者 |
 |---|---|---|
 | [手机App构建说明.md](手机App构建说明.md) | React Native 0.75 原生 Android App 的环境依赖（JDK 17/Gradle/SDK）、bundle+gradle 构建、pscp 发布流程、中文路径 subst 等踩坑记录、**应用内自更新机制与发版流程（第五章，v1.1.0 起）**、版本记录 | 移动端发布 |
+| [手机App发布更新流程.md](手机App发布更新流程.md) | **App 发新版照做的操作手册**（与 EXE 流程手册对应）：版本源字段表、覆盖安装前提、标准发版 8 步（改版本号→bundle→gradle→SHA256→无 BOM JSON→pscp 上传→三重验证→手机实测）、紧急回滚、排查速查、发布记录 | 发布人 |
+| [App自更新测试报告模板.md](App自更新测试报告模板.md) | App 应用内自更新功能的测试报告模板：22 个用例（P0 核心链路 8 个 / P1 异常边界 12 个 / P2 体验兼容 2 个）、前置条件自检、问题记录与结论签收，每次发新版复制一份填写 | 测试/发布人 |
 | [ReactNative重建方案.md](ReactNative重建方案.md) | 旧 Capacitor WebView 套壳 → React Native 原生 App 的技术选型依据与重建方案 | 开发/维护 |
 
 ## 改造记录（历史归档）
