@@ -1,4 +1,4 @@
-# 电脑固定资产管理系统 v3.6
+# 电脑固定资产管理系统 v3.7.1
 
 > 固定资产管理平台，双运行形态：
 > **单机版** — 基于 Electron 的离线桌面应用，便携式 .exe 单文件运行；v2.5.0 起单机模式**内置完整服务端**（自动拉起 asset-server 子进程），飞书同步等 C/S 全部功能单机开箱即用；
@@ -9,7 +9,7 @@
 | 形态 | 适用场景 | 说明 |
 |------|----------|------|
 | 单机便携版 | 个人/单机使用 | 双击 EXE 即用；v2.5.0 起自动拉起内置 asset-server（127.0.0.1 随机端口 + 一次性 token 免密），**飞书同步/用户管理等 C/S 功能单机同样可用**；内置服务不可用时自动回退旧精简服务器 |
-| C/S 客户端 | 团队多用户 | 应用内"连接服务器设置"或 EXE 旁 `server.config.json` 即直连服务端，本地不落数据 |
+| C/S 客户端 | 团队多用户 | 应用内"连接服务器设置"或 EXE 旁 `server.config.json` 即直连服务端，本地不落数据；**v3.7.1 起支持在线自更新**（启动自动检查 + 菜单"检查更新"，发版流程见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**） |
 | 浏览器访问 | 团队多用户 | 直接访问服务端地址，免安装，Edge/Chrome 均可 |
 | 手机 App（Android） | 移动扫码盘点 | **React Native 0.75 原生 App**（`mobile-app-rn/`，2026-09-12 取代旧 Capacitor 套壳方案）；JS bundle 内置离线运行，VisionCamera v4 + MLKit 原生扫码，扫码后弹资产卡"一码一确认"再标记已盘；MMKV 本地存储 + 四套主题。**改动 RN 代码需重新构建 APK**（已固化 `rn-apk-deploy` 技能，说"发布"即可）。构建方法见 **[手机App构建说明.md](手机App构建说明.md)** |
 
@@ -27,6 +27,7 @@
 - **数据手动双向同步** — 两个入口：① 连接服务器设置窗口；② 系统设置 → "服务器连接"卡片。均可将服务端数据拉取到本地、或将本地数据推送到服务端（全量覆盖，带二次确认），用于单机 ↔ 服务端数据互导
 - **飞书多维表格双向同步** — 系统资产与飞书 Bitable 手动互推/互拉（增量哈希检测、字段映射自动匹配、冲突 LWW 策略、操作审计）；支持一个多维表格下**多数据表按"主体"自动路由**；配置页提供「选择数据表」下拉（自动列出全部数据表、切换即重载字段，失效表红色告警）；内置小白引导向导 + 粘贴飞书链接自动提取 App Token/Table ID + 字段帮助气泡。C/S 模式与 v2.5.0+ 单机内嵌模式均可用。配置方法见 **[飞书同步配置指南.md](飞书同步配置指南.md)**
 - **服务端信息查看** — 系统设置"服务器连接"卡片（C/S 客户端模式自动显示）+ 连接服务器设置窗口，均展示服务器地址 / 名称 / 版本 / 当前登录用户；免鉴权 `GET /api/info` 即可查看
+- **客户端在线自更新**（v3.7.1+，仅 C/S 客户端模式）— 客户端窗口启动 6 秒后静默检查服务器 `http://<服务器>/downloads/client-update.json`，发现新版弹窗询问，确认后自动下载（任务栏进度条）→ SHA256 校验 → 自替换原 EXE → 重启完成升级；菜单（Alt）**设置 → 检查更新**可手动检查；网络不通/校验失败/文件占用均静默降级保留旧版；**单机模式不检查更新**。首次需手动分发一次带更新器的 v3.7.1 EXE，之后全自动。发布操作手册见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**
 - **并发安全**（C/S）— 乐观锁版本冲突检测、数据版本变更提醒、批量导入事务回滚
 - **皮肤主题** — 亮色 / 暗色 / 纯黑 / 科技 四套皮肤循环切换
 - **离线运行**（单机版）— 完全离线使用，数据三重冗余存储
@@ -105,7 +106,7 @@ python -m http.server 8000
 ├── index.html              # 主页面（登录守卫；本地快照仅 file:// 协议加载；侧栏含全局"切换运行模式"入口）
 ├── login.html              # 统一登录入口（模式选择卡片 + C/S 登录二合一；?switch=1 强制绕开自动免密/自动跳转）
 ├── styles.css              # 全局样式（含 4 套皮肤主题变量）
-├── main.js                 # Electron 主进程（单机/C/S 双模式；单机模式拉起内置 asset-server.exe 子进程并注入一次性免密 token，失败回退精简服务器；退出时结束子进程；内置打印预览窗口 openPrintWindow + window.open 兜底捕获）
+├── main.js                 # Electron 主进程（单机/C/S 双模式；单机模式拉起内置 asset-server.exe 子进程并注入一次性免密 token，失败回退精简服务器；退出时结束子进程；内置打印预览窗口 openPrintWindow + window.open 兜底捕获；v3.7.1 C/S 客户端在线更新模块：静默检查/手动检查/下载/SHA256 校验/explorer 代启 wscript 自替换重启）
 ├── connection-preload.js   # Electron preload 桥接（向渲染进程暴露 window.connApi.* IPC：连接服务器 / printCard 打印登记卡等）
 ├── asset_label_print.html  # 标签打印页面（规格型号取 asset.brandModel）
 ├── 安装.bat                # 创建桌面快捷方式（调用 install.ps1）
@@ -148,6 +149,7 @@ python -m http.server 8000
 ├── ReactNative重建方案.md  # ★ RN 重建选型与方案（旧 Capacitor → 原生 RN 的改造依据）
 ├── 飞书同步配置指南.md     # ★ 飞书应用创建/凭证获取/数据表选择/字段映射/同步操作/FAQ（小白版）
 ├── CS架构部署文档.md       # 部署操作手册（Windows/Linux 服务端、nginx、数据库、客户端）
+├── EXE客户端发布更新流程.md # ★ v3.7.1+ 客户端自更新机制说明与发版操作手册（构建→上传 client-update.json/exe→验证→回滚）
 ├── CS架构改造变更摘要.md   # C/S 改造的变更明细
 ├── 资产盘点模块技术文档.md # ★ 盘点模块需求/架构/数据结构/API/前端/UI/移动端/验证方案
 ├── 手机App构建说明.md      # ★ RN 原生 APK 环境依赖/构建发布流程/踩坑记录/版本记录
@@ -285,6 +287,8 @@ Electron 开发模式下 `Ctrl+R` 刷新窗口；浏览器调试时 `Ctrl+F5` �
 | 客户端连接服务器超时 | 地址不要带 `:3456`——生产部署（nginx）下 3456 仅监听 127.0.0.1，外部只能走 80/443；填 `http://<服务器IP>` 即可。排查：`curl http://<IP>/api/ping` |
 | 单机版飞书/用户管理没有反应 | 内置 asset-server 未拉起：查看 `%TEMP%\asset-desktop.log` 诊断日志；确认 `%APPDATA%\asset-management-system\connection.json` 未残留 `mode:client` 旧配置（残留会走 C/S 分支不启动内置进程，删除该文件回到单机模式） |
 | 深色主题下某块白底/文字看不清 | 多为内联硬编码浅色样式未跟随主题；已批量修复为 CSS 变量，如新增页面遇到同类问题，用工作区技能 `theme-color-fix` 扫描替换 |
+| 客户端收不到更新提示 | 仅 C/S 客户端模式检查更新（单机模式菜单"检查更新"会明确提示不支持）；确认服务器 `http://<服务器IP>/downloads/client-update.json` 可访问且 `version` 高于客户端版本；诊断日志见 `%TEMP%\asset-update.log`；EXE 必须是 v3.7.1 及以上构建（旧版无更新器，需手动分发一次新版） |
+| 更新下载后失败/没有重启 | 查看 `%TEMP%\asset-update.log`：`SHA256 不匹配` = 上传的 json 与 exe 哈希不一致（重新计算并更新 json）；`30秒内原文件仍被占用` = EXE 目录权限不足或被杀软拦截（对 EXE 目录加白名单后用菜单"检查更新"重试）；任何失败旧版本均原样保留可继续使用。完整排查见 [EXE客户端发布更新流程.md](EXE客户端发布更新流程.md) |
 
 ## 打包部署
 
@@ -304,6 +308,8 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 
 生产部署使用 `server/deploy/` 部署包（nginx 反代 + 自签证书 + NSSM 服务化，一键安装），完整手册见 **[CS架构部署文档.md](CS架构部署文档.md)**；Linux 服务器（systemd + nginx/certbot）见部署文档**第 11 章**。
 
+**C/S 客户端 EXE 发版（v3.7.1+）**：客户端支持在线自更新后，发新版只需"构建 → 上传固定名 exe + client-update.json 到服务器下载目录"，已分发的客户端启动时自动发现并提示升级，无需逐台电脑手动替换。完整步骤（含 SHA256 计算、pscp 命令模板、验证与回滚）见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**。注意：**v3.7.1 是首个带更新器的版本，这一版仍需手动分发一次**。
+
 **构建优化**：
 - `electronLanguages: ["zh-CN", "en-US"]` 仅保留中英文语言包
 - `compression: "maximum"` 最大压缩比
@@ -314,6 +320,16 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 - **rcedit-x64.exe 需要管理员权限**：写入 PE 版本资源必须以管理员身份运行 electron-builder。`scripts/build-portable.js` 已内置自动提权（非管理员 → PowerShell `Start-Process -Verb RunAs` → UAC → 重跑），无需手动右键。跳过提权时 rcedit 会报 `Fatal error: Unable to commit changes`（electron-builder 重试 3 次后继续，产物可运行但属性页缺 FileDescription/InternalName）。
 
 ## 版本历史
+
+- **v3.7.1** (2026-09-13) — 便携版 EXE 客户端在线自更新：
+  - **更新机制（仅 C/S 客户端模式）**：客户端窗口加载成功 6 秒后静默 GET 所连服务器的 `/downloads/client-update.json`（5 秒超时，失败完全忽略不打扰用户）；发现新版本号（按 `.` 分段数字比较）弹原生对话框显示版本号与更新说明，用户确认后下载（任务栏图标显示 `setProgressBar` 进度）→ **SHA256 完整性校验** → 自替换分发的原 EXE → 自动拉起新版本；菜单（Alt 键）**设置 → 检查更新**支持手动检查（含"已是最新 / 无法获取更新信息 / 单机模式不支持"明确提示）
+  - **便携版自替换踩坑与方案**：① 原 EXE 路径必须取 stub 注入的 `PORTABLE_EXECUTABLE_FILE` 环境变量（`app.getPath('exe')` 指向 %TEMP% 解压目录内的内部 EXE，替换它会被下次启动重新解压覆盖，且解压目录名确定会引发 stub 无限重生循环）；② stub 存活期间持有自身文件句柄（运行中 rename/copy 报 EBUSY），且应用自身 spawn 的 detached 辅助进程会被 stub 退出时的进程树清理连带杀掉——最终方案为写 UTF-16LE+BOM 的 wscript 辅助脚本，经 **explorer.exe 代启**彻底脱离应用进程树，脚本轮询等待原 EXE 可写 → 旧文件改名 `.old` → 移入新文件（失败自动回滚）→ 启动新版；③ 启动时 `cleanupUpdateResidue()` 自动清理上次残留的 `.old` 与下载临时文件
+  - **失败安全**：网络不通、JSON 解析失败、SHA256 不匹配、30 秒内文件仍被占用等任何异常，均保留旧版 EXE 原样可继续运行；更新全过程日志写 `%TEMP%\asset-update.log`
+  - **服务端零改动**：版本源为 nginx 已托管的静态目录（`http://<服务器>/downloads/client-update.json` + 固定文件名 `asset-mgmt-client.exe`）；当前生产已部署于 192.168.40.247
+  - **一次性手动分发**：v3.7.1 是首个内置更新器的版本，已分发的旧 EXE 无更新能力，需手动分发替换一次；之后所有新版本客户端启动即自动提示升级
+  - `package.json` 版本号 2.5.0 → 3.7.1 对齐系统版本线（EXE 内 `app.getVersion()` 以此参与版本比较）
+  - 新增操作手册 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**；[CS架构部署文档.md](CS架构部署文档.md) 新增 7.5 节客户端更新机制
+  - 本地端到端验证：mock 服务器（127.0.0.1:3456）模拟"同版本无弹窗 / 9.9.9 大版本弹窗→确认→下载→校验→自替换→自动重启"全链路通过
 
 - **v3.7.0** (2026-09-12) — React Native 原生 App 重建 + 飞书数据表选择器（[GitHub Release](https://github.com/jackie251818/asset-management-system/releases/tag/v3.7.0)，APK 资产 `asset-mgmt-rn-v3.7.apk`）：
   - **手机 App 原生重建**：废弃并删除旧 Capacitor WebView 套壳工程（`mobile-app/`，6.2 MB），按 **[ReactNative重建方案.md](ReactNative重建方案.md)** 新建 `mobile-app-rn/`（RN 0.75.4 + TypeScript，旧架构 + Hermes）；React Navigation 四 Tab（首页/资产/盘点/我的）+ Stack，Zustand + MMKV 持久化，四套主题；JS bundle 内置 APK 可离线运行；APK 约 200 MB（四架构 + MLKit 模型），托管于 `http://192.168.40.247/downloads/`

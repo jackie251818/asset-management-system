@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v3.2（服务端 v1.0.0；新增 7.3 EXE 客户端切换服务器踩坑（userData 目录名 / BOM / server.config.json 检测） + 11.12 注意事项 #17-#19；保留 v3.1 全部内容：11.3 V8 字节码跨平台 + 11.4 源码部署编译工具链 + 11.7 nginx 完整部署教程 + 11.12 #14-#16；v3.0 v3.4 客户端改动 + 源码部署前端文件缺失风险 + HTTP 404 预检/拦截增强；7.3 客户端接入含应用内连接设置、服务端信息面板与数据手动双向同步） |
+| 文档版本 | v3.3（新增 7.5 EXE 客户端在线自更新 v3.7.1+：/downloads/client-update.json 版本源、nginx 静态目录配置、自更新机制说明，发版操作见独立手册《EXE客户端发布更新流程.md》；保留 v3.2 全部内容：7.3 EXE 客户端切换服务器踩坑（userData 目录名 / BOM / server.config.json 检测） + 11.12 注意事项 #17-#19；v3.1：11.3 V8 字节码跨平台 + 11.4 源码部署编译工具链 + 11.7 nginx 完整部署教程 + 11.12 #14-#16；v3.0 v3.4 客户端改动 + 源码部署前端文件缺失风险 + HTTP 404 预检/拦截增强；7.3 客户端接入含应用内连接设置、服务端信息面板与数据手动双向同步） |
 | 架构形态 | 客户端/服务端（C/S），服务端内嵌 SQLite 数据库 |
 | 适用系统 | Windows 10 / 11 / Windows Server 2016+；Linux x64（Ubuntu 20.04+/Debian 11+/RHEL 9+，见第 11 章）；CentOS 7 专用方案见第 12 章 |
 | 维护要求 | 服务端需固定内网 IP 或 DHCP 保留地址 |
@@ -688,6 +688,51 @@ Content-Type: application/json
 - `POST/DELETE` 写接口需要 JWT（`Authorization: Bearer` 或 `X-Server-Token` 头均可）；写接口的键名还受 compat 层白名单约束（`KV_KEYS` 精确名单含 `userStateData`/`systemSettings`/`backupHistory`/`assetCardTemplate`/`analyzedExcelFormats`/`inventory_sessions`，前缀匹配 `asset_userStateData_`/`inventory_session_`）；**例外**：盘点键（`inventory_sessions` 与 `inventory_session_*`）对所有已登录用户放行写入/删除，含 viewer 只读角色（资产盘点功能要求 viewer 可参与），操作记 `inventory.save`/`inventory.delete` 审计日志；
 - 旧前端切换到新服务端只需：登录获取 token → 注入 `window.__SERVER_TOKEN__`。
 
+### 7.5 EXE 客户端在线自更新（v3.7.1+）
+
+便携版 EXE v3.7.1 起内置更新器，**仅 C/S 客户端模式生效**（单机模式无更新源，菜单检查会提示不支持）。服务端程序零改动，只需 nginx 提供静态下载目录。
+
+**工作机制**：
+
+1. 客户端窗口加载成功 6 秒后静默 GET 所连服务器的 `/downloads/client-update.json`（5 秒超时，失败无任何打扰）；
+2. JSON 中 `version` 按点分数字与本地 `app.getVersion()` 比较，更高则弹「发现新版本」对话框（含 `notes` 更新说明）；用户也可随时按 **Alt → 设置 → 检查更新**手动触发；
+3. 确认后下载固定名文件 `asset-mgmt-client.exe`（任务栏进度条），有 `sha256` 字段则强制完整性校验；
+4. 校验通过后由 explorer 代启 wscript 辅助脚本，等应用退出、原 EXE 释放后完成"旧文件改名 `.old` → 移入新文件（失败自动回滚）→ 重启新版"；
+5. 任何失败（网络/校验/文件占用 30 秒超时）均保留旧版可用；客户端诊断日志 `%TEMP%\asset-update.log`。
+
+**服务器侧必备配置（一次性）**：
+
+```nginx
+# nginx 站点配置，放在 location / 之前
+location /downloads/ {
+    alias /opt/asset-server/downloads/;   # Windows 部署包对应 deploy\downloads\
+    autoindex on;
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+sudo mkdir -p /opt/asset-server/downloads
+sudo chown asset:asset /opt/asset-server/downloads
+```
+
+`client-update.json` 示例（**UTF-8 无 BOM**，url 可省略——默认取 `<origin>/downloads/asset-mgmt-client.exe`）：
+
+```json
+{
+  "version": "3.7.2",
+  "url": "http://192.168.40.247/downloads/asset-mgmt-client.exe",
+  "notes": "1. 修复 XXX\n2. 新增 YYY",
+  "sha256": "（新 EXE 的 SHA256 小写哈希）",
+  "publishedAt": "2026-09-13T06:00:00Z"
+}
+```
+
+当前生产（192.168.40.247）已配置完成：版本源 `http://192.168.40.247/downloads/client-update.json`，文件属主 `asset:asset`、权限 644。
+
+> ⚠️ **v3.7.1 是首个带更新器的版本，必须手动向已分发用户替换一次 v3.7.1 EXE；之后的新版本客户端才能自动发现升级。**
+> 完整发版步骤（构建→SHA256→生成 JSON→pscp 上传→sudo 就位→curl 验证→客户端实测）、一键 PowerShell 命令模板、回滚撤回与故障排查，见独立手册 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**。
+
 ---
 
 ## 8. 安全加固清单（上线必做）
@@ -718,6 +763,7 @@ Content-Type: application/json
 | 升级服务端 | EXE：停 AssetServer → 备份 `data\` → 覆盖 `asset-server.exe` → 启动；源码：停服 → 备份 `data\` → 覆盖 `src\`/`package.json` → `npm install` → 启动 |
 | 回滚版本 | 停服 → 还原程序目录与 `asset.db` 备份 → 启动 |
 | 数据库备份 | 第 4.4 节，建议每日自动 |
+| 发布客户端新版 EXE | v3.7.1+ 客户端在线自更新：构建后把固定名 `asset-mgmt-client.exe` + `client-update.json` 放到 `/downloads/`（见 7.5），完整步骤见 [EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)；v3.7.1 之前的旧客户端无更新器，需手动替换一次 |
 | 服务器换机 | EXE：拷贝部署包（含 `data\`、`cert\`）→ 重新 `install-service.bat`；源码：新机装 Node → 拷贝整个 `server\`（含 `data\`）→ NSSM 启动 |
 | Linux / CentOS 服务器 | systemctl 管理见 11.5；CentOS 7 特殊事项见第 12 章 |
 
