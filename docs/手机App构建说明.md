@@ -241,6 +241,8 @@ node_modules/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf
 
 ### 5.4 发布新版本 App 的标准流程（以后照做）
 
+> 本节为机制内嵌的简要流程；**日常发版建议直接照 [手机App发布更新流程.md](手机App发布更新流程.md) 执行**（含回滚与排查速查）。
+
 ```powershell
 # ① 改版本号（两处）
 #   android/app/build.gradle → versionCode 必须 +1（整数）、versionName 按语义化版本改
