@@ -1,0 +1,8 @@
+{
+  "versionCode": 2,
+  "versionName": "1.1.0",
+  "url": "http://192.168.40.247/downloads/asset-mgmt-rn-debug.apk",
+  "notes": "【新增】一行一个要点，支持 \n 分行",
+  "sha256": "<APK 文件的小写 SHA256，发版时用 Get-FileHash 生成>",
+  "publishedAt": "2026-09-13T14:50:00+08:00"
+}

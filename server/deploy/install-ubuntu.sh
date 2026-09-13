@@ -123,7 +123,7 @@ fi
 
 # ---------- Step 4: 部署文件 ----------
 step "4. 部署文件"
-mkdir -p "$INSTALL_DIR/data"
+mkdir -p "$INSTALL_DIR/data" "$INSTALL_DIR/downloads"
 cp "$BIN_SRC" "$INSTALL_DIR/asset-server-linux"
 chmod +x "$INSTALL_DIR/asset-server-linux"
 ok "asset-server-linux 已部署"
@@ -270,6 +270,11 @@ server {
     listen 80;
     server_name _;
     client_max_body_size 64m;
+    location /downloads/ {
+        alias /opt/asset-server/downloads/;
+        autoindex on;
+        autoindex_exact_size off;
+    }
     location / {
         proxy_pass http://127.0.0.1:$PORT;
         proxy_set_header Host \$host;
@@ -290,6 +295,11 @@ server {
     ssl_certificate_key /etc/nginx/cert/server.key;
     ssl_protocols       TLSv1.2 TLSv1.3;
     client_max_body_size 64m;
+    location /downloads/ {
+        alias /opt/asset-server/downloads/;
+        autoindex on;
+        autoindex_exact_size off;
+    }
     location / {
         proxy_pass http://127.0.0.1:$PORT;
         proxy_set_header Host \$host;

@@ -139,7 +139,7 @@ if echo "$LIST_XTOKEN" | jsuccess; then ok "X-Server-Token 头 → 鉴权通过"
 # ---------- 8. 前端静态文件 (经 nginx) ----------
 hr "8. 前端静态文件 (经 nginx)"
 ALL_OK=1
-for f in login.html index.html styles.css asset_label_print.html build-info.json \
+for f in login.html index.html styles.css asset_label_print.html final_chart_fix.js build-info.json \
          js/init.js js/api.js js/assets.js js/storage.js js/events.js js/dashboard.js js/import-export.js \
          libs/chart.min.js libs/xlsx.full.min.js libs/pdf.min.js libs/pdf.worker.min.js libs/qrcode.min.js \
          libs/font-awesome.min.css libs/fa-solid-900.woff2; do

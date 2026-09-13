@@ -36,6 +36,7 @@
       "../index.html",
       "../login.html",
       "../styles.css",
+      "../final_chart_fix.js",
       "../build-info.json",
       "../js/**/*",
       "../libs/**/*",

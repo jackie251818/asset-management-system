@@ -704,8 +704,9 @@ Content-Type: application/json
 
 ```nginx
 # nginx 站点配置，放在 location / 之前
+# （按 11.4 一键脚本 / 11.7 / setup-nginx.sh 部署的服务器已内置此块，无需重复配置）
 location /downloads/ {
-    alias /opt/asset-server/downloads/;   # Windows 部署包对应 deploy\downloads\
+    alias /opt/asset-server/downloads/;   # Windows 部署包对应部署目录下 downloads\
     autoindex on;
 }
 ```
@@ -715,6 +716,8 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo mkdir -p /opt/asset-server/downloads
 sudo chown asset:asset /opt/asset-server/downloads
 ```
+
+> 新部署的服务器**不要预置** `client-update.json` / `apk-update.json`（会让已装客户端误报更新但下载 404）；首次发版时再按下方示例与 [EXE客户端发布更新流程.md](EXE客户端发布更新流程.md) / [手机App发布更新流程.md](手机App发布更新流程.md) 生成上传。字段模板见仓库 `server/deploy/downloads/`。
 
 `client-update.json` 示例（**UTF-8 无 BOM**，url 可省略——默认取 `<origin>/downloads/asset-mgmt-client.exe`）：
 
@@ -943,6 +946,8 @@ curl http://127.0.0.1:3456/api/ping
 
 ### 11.4 方式 B：源码部署
 
+> **⚡ 一键脚本（推荐，生产 192.168.40.247 同款）**：把项目根整体拷贝到部署机（保持结构：`server/` 与前端静态文件同级，剔除 `server/node_modules`），执行 `sudo bash server/deploy/install-ubuntu-source.sh [部署包根目录]`，即自动完成下面 ①~⑤ 全部步骤 + nginx（80/443 + `/downloads/`）+ 自签证书 + 防火墙 + 探活验证。脚本说明与生产布局映射见 [../server/deploy/README.md](../server/deploy/README.md)。以下手动步骤保留作为原理说明与排障参考。
+
 ```bash
 # ① 按 11.2 安装 Node.js
 
@@ -1052,11 +1057,17 @@ Linux 上 nginx 配置与 Windows 版逻辑相同，但无 ASCII 路径限制，
 sudo apt install -y nginx          # 或 sudo dnf install nginx
 
 # HTTP(80) 站点配置
+sudo mkdir -p /opt/asset-server/downloads && sudo chown asset:asset /opt/asset-server/downloads
 sudo tee /etc/nginx/conf.d/asset.conf > /dev/null <<'EOF'
 server {
     listen 80;
     server_name _;
     client_max_body_size 64m;
+    location /downloads/ {
+        alias /opt/asset-server/downloads/;
+        autoindex on;
+        autoindex_exact_size off;
+    }
     location / {
         proxy_pass http://127.0.0.1:3456;
         proxy_set_header Host $host;
@@ -1141,11 +1152,17 @@ sudo chmod 644 /etc/nginx/cert/server.crt
 sudo rm -f /etc/nginx/sites-enabled/default
 
 # HTTP 80 → 反代到 127.0.0.1:3456
+sudo mkdir -p /opt/asset-server/downloads && sudo chown asset:asset /opt/asset-server/downloads
 sudo tee /etc/nginx/conf.d/asset.conf > /dev/null <<'EOF'
 server {
     listen 80;
     server_name _;
     client_max_body_size 64m;
+    location /downloads/ {
+        alias /opt/asset-server/downloads/;
+        autoindex on;
+        autoindex_exact_size off;
+    }
     location / {
         proxy_pass http://127.0.0.1:3456;
         proxy_set_header Host $host;

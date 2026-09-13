@@ -1,0 +1,7 @@
+{
+  "version": "3.7.1",
+  "url": "http://192.168.40.247/downloads/asset-mgmt-client.exe",
+  "notes": "v3.7.1: 客户端在线更新功能上线（菜单[设置-检查更新]）；修复清空数据多端同步；恢复出厂设置。",
+  "sha256": "<EXE 文件的小写 SHA256，发版时用 Get-FileHash 生成>",
+  "publishedAt": "2026-09-13T06:00:00Z"
+}

@@ -1,0 +1,33 @@
+# 固定资产管理系统 - iStoreOS（OpenWrt 系软路由）Docker 编排
+#
+# 使用前提（详见 docs/iStoreOS部署说明.md）:
+#   1. 持久盘已挂载，目录结构: /mnt/sda1/asset-server/{server,data,backup,cert}
+#      （挂载点不同时，把下方所有 /mnt/sda1 替换为实际路径）
+#   2. server/ 源码已上传到 /mnt/sda1/asset-server/server（剔除 node_modules）
+#   3. 首次先装依赖:
+#      docker compose run --rm asset-server npm install --omit=dev
+#   4. 启动: docker compose up -d    验证: curl http://127.0.0.1:3456/api/ping
+#
+# 注意: iStoreOS 的 80/443 被 LuCI 管理界面占用，本编排只映射 3456；
+#       如需 HTTPS，按部署说明第 6 章另起 nginx 容器在 8443 反代。
+#
+# 升级应用: 覆盖 /mnt/sda1/asset-server/server 后 `docker compose restart`
+# 定时备份: crontab 加 `0 2 * * * docker exec asset-server node /app/server/backup.js`
+
+services:
+  asset-server:
+    image: node:20-slim
+    container_name: asset-server
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    environment:
+      - ASSET_HOST=0.0.0.0
+      - ASSET_PORT=3456
+      - ASSET_DATA_DIR=/app/data
+      - TZ=Asia/Shanghai
+    volumes:
+      - /mnt/sda1/asset-server/server:/app/server
+      - /mnt/sda1/asset-server/data:/app/data
+    working_dir: /app/server
+    command: node src/index.js

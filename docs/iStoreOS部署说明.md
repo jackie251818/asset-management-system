@@ -132,6 +132,8 @@ docker run -d --name asset-server \
 | `-e ASSET_DATA_DIR=/app/data` | 数据指向挂载目录，落盘到持久盘 |
 | `-e TZ=Asia/Shanghai` | 容器时区，保证日志/备份时间戳正确 |
 
+> 也可使用仓库提供的 compose 编排文件一次性完成 3.1~3.2：把 [../server/deploy/istoreos/docker-compose.yml](../server/deploy/istoreos/docker-compose.yml) 上传后 `docker compose -f docker-compose.yml up -d`（挂载点不是 /mnt/sda1 时先改文件内路径；依赖安装用 `docker compose run --rm asset-server npm install --omit=dev`）。iStoreOS 若无 compose 插件，继续用上方 `docker run` 命令。
+
 ### 3.3 验证
 
 ```bash

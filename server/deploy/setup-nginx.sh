@@ -5,7 +5,7 @@
 # ============================================================
 set -e
 
-SERVER_IP="192.168.40.247"
+SERVER_IP="${1:-192.168.40.247}"   # 可传参覆盖: ./setup-nginx.sh <本机内网IP>
 HOSTNAME_STR="$(hostname)"
 
 echo "==== 1. 安装 nginx ===="
@@ -25,12 +25,21 @@ echo "==== 3. 写入 nginx 站点配置 (80 + 443) ===="
 # 移除默认站点避免冲突
 rm -f /etc/nginx/sites-enabled/default
 
+# 客户端/App 在线更新文件目录(EXE 自更新 + App 自更新的版本源)
+mkdir -p /opt/asset-server/downloads
+chown asset:asset /opt/asset-server/downloads 2>/dev/null || true
+
 # HTTP 80 反向代理
 cat > /etc/nginx/conf.d/asset.conf <<'EOF'
 server {
     listen 80;
     server_name _;
     client_max_body_size 64m;
+    location /downloads/ {
+        alias /opt/asset-server/downloads/;
+        autoindex on;
+        autoindex_exact_size off;
+    }
     location / {
         proxy_pass http://127.0.0.1:3456;
         proxy_set_header Host $host;
