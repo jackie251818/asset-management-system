@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ScrollView, Switch } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ScrollView, Switch, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../theme/ThemeProvider';
 import { ThemeName, themes } from '../theme/colors';
 import { spacing, radius, fontSize } from '../theme/spacing';
 import { useAuthStore } from '../store/authStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { useUpdateStore } from '../store/updateStore';
 import { authApi } from '../api/auth';
+import { apkUpdateSupported, getCurrentVersion } from '../utils/apkUpdate';
 
 const themeOptions: { name: ThemeName; label: string; icon: string }[] = [
   { name: 'light', label: '浅色', icon: 'white-balance-sunny' },
@@ -24,6 +26,16 @@ export default function SettingsScreen() {
   const [editing, setEditing] = useState(false);
   const [urlInput, setUrlInput] = useState(serverUrl);
   const [testing, setTesting] = useState(false);
+  const [versionLabel, setVersionLabel] = useState('');
+  const checkingUpdate = useUpdateStore((s) => s.checking);
+  const checkUpdate = useUpdateStore((s) => s.check);
+
+  useEffect(() => {
+    if (!apkUpdateSupported) return;
+    getCurrentVersion()
+      .then((v) => setVersionLabel(`v${v.versionName}（${v.versionCode}）`))
+      .catch(() => {});
+  }, []);
 
   const handleSaveUrl = async () => {
     setServerUrl(urlInput);
@@ -115,6 +127,30 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>关于</Text>
+        <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.aboutRow, { borderBottomColor: theme.border }]}>
+            <Icon name="information-outline" size={20} color={theme.primary} />
+            <Text style={[styles.aboutLabel, { color: theme.text }]}>当前版本</Text>
+            <Text style={[styles.aboutValue, { color: theme.textSecondary }]}>{versionLabel || '--'}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.aboutRow}
+            onPress={() => checkUpdate(true)}
+            disabled={checkingUpdate}
+          >
+            <Icon name="cellphone-arrow-down" size={20} color={theme.primary} />
+            <Text style={[styles.aboutLabel, { color: theme.text }]}>检查更新</Text>
+            {checkingUpdate ? (
+              <ActivityIndicator size="small" color={theme.primary} />
+            ) : (
+              <Icon name="chevron-right" size={18} color={theme.textMuted} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.section}>
         <TouchableOpacity style={[styles.logoutBtn, { backgroundColor: theme.danger }]} onPress={handleLogout}>
           <Icon name="logout" size={20} color="#fff" />
           <Text style={styles.logoutText}>退出登录</Text>
@@ -140,6 +176,9 @@ const styles = StyleSheet.create({
   btn: { flex: 1, height: 40, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   themeRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, gap: spacing.sm },
   themeLabel: { flex: 1, fontSize: fontSize.md },
+  aboutRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, minHeight: 48 },
+  aboutLabel: { flex: 1, fontSize: fontSize.md },
+  aboutValue: { fontSize: fontSize.sm },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 48, borderRadius: radius.md, gap: spacing.sm },
   logoutText: { color: '#fff', fontSize: fontSize.md, fontWeight: '600' },
 });

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 可共享路径：更新 APK 下载到应用专属缓存（无需存储权限） -->
+<paths>
+    <external-cache-path name="external_cache_updates" path="updates/" />
+    <external-cache-path name="external_cache_root" path="." />
+    <cache-path name="cache_updates" path="updates/" />
+    <cache-path name="cache_root" path="." />
+</paths>

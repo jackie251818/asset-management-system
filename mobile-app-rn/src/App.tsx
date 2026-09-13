@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 import RootNavigator from './navigation/RootNavigator';
+import UpdateGate from './components/UpdateGate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +22,7 @@ function AppInner() {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
           <RootNavigator />
         </SafeAreaView>
+        <UpdateGate />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

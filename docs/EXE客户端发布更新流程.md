@@ -146,7 +146,7 @@ curl -s  http://192.168.40.247/downloads/client-update.json                 # �
 
 ### 步骤 1：改版本号
 
-编辑 [package.json](package.json)：
+编辑 [package.json](../package.json)：
 
 ```json
 "version": "x.y.z"

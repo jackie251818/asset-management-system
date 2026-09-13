@@ -17,6 +17,8 @@ class MainApplication : Application(), ReactApplication {
             override fun getPackages(): List<ReactPackage> =
                 PackageList(this).packages.apply {
                     // 自动链接的包已在 PackageList 中
+                    // 应用内自更新（下载 APK + FileProvider 调起安装器）
+                    add(ApkUpdatePackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"

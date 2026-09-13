@@ -1,6 +1,6 @@
 {
   "name": "asset-mgmt-rn",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "固定资产管理系统 React Native 版",
   "scripts": {

@@ -5,7 +5,7 @@
  *   node backup.js                  # 备份到 <数据目录>\backups, 自动保留最近 10 份
  *   node backup.js D:\backup-dir    # 指定备份目录
  *
- * 建议配合 Windows 计划任务每日自动执行(见 CS架构部署文档.md 第 4.4 节)。
+ * 建议配合 Windows 计划任务每日自动执行(见 docs/CS架构部署文档.md 第 4.4 节)。
  */
 
 const path = require('path');

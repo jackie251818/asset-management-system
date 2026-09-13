@@ -9,9 +9,9 @@
 | 形态 | 适用场景 | 说明 |
 |------|----------|------|
 | 单机便携版 | 个人/单机使用 | 双击 EXE 即用；v2.5.0 起自动拉起内置 asset-server（127.0.0.1 随机端口 + 一次性 token 免密），**飞书同步/用户管理等 C/S 功能单机同样可用**；内置服务不可用时自动回退旧精简服务器 |
-| C/S 客户端 | 团队多用户 | 应用内"连接服务器设置"或 EXE 旁 `server.config.json` 即直连服务端，本地不落数据；**v3.7.1 起支持在线自更新**（启动自动检查 + 菜单"检查更新"，发版流程见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**） |
+| C/S 客户端 | 团队多用户 | 应用内"连接服务器设置"或 EXE 旁 `server.config.json` 即直连服务端，本地不落数据；**v3.7.1 起支持在线自更新**（启动自动检查 + 菜单"检查更新"，发版流程见 **[EXE客户端发布更新流程.md](docs/EXE客户端发布更新流程.md)**） |
 | 浏览器访问 | 团队多用户 | 直接访问服务端地址，免安装，Edge/Chrome 均可 |
-| 手机 App（Android） | 移动扫码盘点 | **React Native 0.75 原生 App**（`mobile-app-rn/`，2026-09-12 取代旧 Capacitor 套壳方案）；JS bundle 内置离线运行，VisionCamera v4 + MLKit 原生扫码，扫码后弹资产卡"一码一确认"再标记已盘；MMKV 本地存储 + 四套主题。**改动 RN 代码需重新构建 APK**（已固化 `rn-apk-deploy` 技能，说"发布"即可）。构建方法见 **[手机App构建说明.md](手机App构建说明.md)** |
+| 手机 App（Android） | 移动扫码盘点 | **React Native 0.75 原生 App**（`mobile-app-rn/`，2026-09-12 取代旧 Capacitor 套壳方案）；JS bundle 内置离线运行，VisionCamera v4 + MLKit 原生扫码，扫码后弹资产卡"一码一确认"再标记已盘；MMKV 本地存储 + 四套主题。**v1.1.0 起支持应用内自更新**（启动自动检查 + "我的→检查更新"，发版流程见 **[手机App构建说明.md](docs/手机App构建说明.md)** 第五章）；改动 RN 代码需重新构建 APK（已固化 `rn-apk-deploy` 技能，说"发布"即可） |
 
 ## 功能特性
 
@@ -22,12 +22,12 @@
 - **二维码标签** — 资产二维码生成与标签打印（70mm x 50mm；规格型号字段取 asset.brandModel）
 - **附件管理** — 图片 / PDF 附件上传、缩略图预览、文件查看器（支持缩放）
 - **维护记录** — 资产维护记录的添加和删除
-- **资产盘点** — 扫码盘点（手机 App 调原生相机扫码，"一码一确认"：扫到弹出资产信息卡、人工确认后标记已盘）+ 列表勾选盘点双模式；每条资产标记 已盘 / 未盘到 / 异常（异常可填备注）；按全部 / 部门 / 地点发起盘点批次，资产快照防后续删改；实时进度条 + 统计卡（应盘/已盘/未盘到/异常）；盘点报告导出 Excel（明细 + 汇总双 sheet）；多轮历史批次可回看；乐观锁防多人并发覆盖；**所有登录用户（含 viewer 只读角色）均可发起和执行盘点**。详见 **[资产盘点模块技术文档.md](资产盘点模块技术文档.md)**
+- **资产盘点** — 扫码盘点（手机 App 调原生相机扫码，"一码一确认"：扫到弹出资产信息卡、人工确认后标记已盘）+ 列表勾选盘点双模式；每条资产标记 已盘 / 未盘到 / 异常（异常可填备注）；按全部 / 部门 / 地点发起盘点批次，资产快照防后续删改；实时进度条 + 统计卡（应盘/已盘/未盘到/异常）；盘点报告导出 Excel（明细 + 汇总双 sheet）；多轮历史批次可回看；乐观锁防多人并发覆盖；**所有登录用户（含 viewer 只读角色）均可发起和执行盘点**。详见 **[资产盘点模块技术文档.md](docs/资产盘点模块技术文档.md)**
 - **多用户与权限**（C/S）— 登录认证（JWT），角色 `admin / editor / viewer`，操作审计；**所有用户可自助修改自己的登录密码**（顶栏用户区 → "修改密码"，需验证旧密码）；admin 还可在"用户管理"页面重置任意用户密码 / 修改角色 / 删除账号；**viewer 可执行资产盘点**（盘点数据写入对 viewer 放行）
 - **数据手动双向同步** — 两个入口：① 连接服务器设置窗口；② 系统设置 → "服务器连接"卡片。均可将服务端数据拉取到本地、或将本地数据推送到服务端（全量覆盖，带二次确认），用于单机 ↔ 服务端数据互导
-- **飞书多维表格双向同步** — 系统资产与飞书 Bitable 手动互推/互拉（增量哈希检测、字段映射自动匹配、冲突 LWW 策略、操作审计）；支持一个多维表格下**多数据表按"主体"自动路由**；配置页提供「选择数据表」下拉（自动列出全部数据表、切换即重载字段，失效表红色告警）；内置小白引导向导 + 粘贴飞书链接自动提取 App Token/Table ID + 字段帮助气泡。C/S 模式与 v2.5.0+ 单机内嵌模式均可用。配置方法见 **[飞书同步配置指南.md](飞书同步配置指南.md)**
+- **飞书多维表格双向同步** — 系统资产与飞书 Bitable 手动互推/互拉（增量哈希检测、字段映射自动匹配、冲突 LWW 策略、操作审计）；支持一个多维表格下**多数据表按"主体"自动路由**；配置页提供「选择数据表」下拉（自动列出全部数据表、切换即重载字段，失效表红色告警）；内置小白引导向导 + 粘贴飞书链接自动提取 App Token/Table ID + 字段帮助气泡。C/S 模式与 v2.5.0+ 单机内嵌模式均可用。配置方法见 **[飞书同步配置指南.md](docs/飞书同步配置指南.md)**
 - **服务端信息查看** — 系统设置"服务器连接"卡片（C/S 客户端模式自动显示）+ 连接服务器设置窗口，均展示服务器地址 / 名称 / 版本 / 当前登录用户；免鉴权 `GET /api/info` 即可查看
-- **客户端在线自更新**（v3.7.1+，仅 C/S 客户端模式）— 客户端窗口启动 6 秒后静默检查服务器 `http://<服务器>/downloads/client-update.json`，发现新版弹窗询问，确认后自动下载（任务栏进度条）→ SHA256 校验 → 自替换原 EXE → 重启完成升级；菜单（Alt）**设置 → 检查更新**可手动检查；网络不通/校验失败/文件占用均静默降级保留旧版；**单机模式不检查更新**。首次需手动分发一次带更新器的 v3.7.1 EXE，之后全自动。发布操作手册见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**
+- **客户端在线自更新**（v3.7.1+，仅 C/S 客户端模式）— 客户端窗口启动 6 秒后静默检查服务器 `http://<服务器>/downloads/client-update.json`，发现新版弹窗询问，确认后自动下载（任务栏进度条）→ SHA256 校验 → 自替换原 EXE → 重启完成升级；菜单（Alt）**设置 → 检查更新**可手动检查；网络不通/校验失败/文件占用均静默降级保留旧版；**单机模式不检查更新**。首次需手动分发一次带更新器的 v3.7.1 EXE，之后全自动。发布操作手册见 **[EXE客户端发布更新流程.md](docs/EXE客户端发布更新流程.md)**
 - **并发安全**（C/S）— 乐观锁版本冲突检测、数据版本变更提醒、批量导入事务回滚
 - **皮肤主题** — 亮色 / 暗色 / 纯黑 / 科技 四套皮肤循环切换
 - **离线运行**（单机版）— 完全离线使用，数据三重冗余存储
@@ -79,7 +79,7 @@
 
 - **推荐：生产部署包一键安装** — 将 `server/deploy/` 复制到服务器**纯英文路径**，双击 `一键安装.bat`（自动完成证书、防火墙、双 Windows 服务与健康检查）
 - **源码方式** — `server/` 目录 `npm install && npm start`（需 Node.js ≥ 18）
-- 详细步骤见 [CS架构部署文档.md](CS架构部署文档.md)
+- 详细步骤见 [CS架构部署文档.md](docs/CS架构部署文档.md)
 
 ### 开发模式
 
@@ -146,13 +146,17 @@ python -m http.server 8000
 │   ├── android/                # Gradle 8.10.2 + JDK 17 + AGP 8.7.2（gradle-plugins/ 预构建插件 jar）
 │   └── package.json            # RN 0.75.4 / VisionCamera v4 / MMKV 2.12 / Navigation 6（版本锁定见构建说明）
 │
-├── ReactNative重建方案.md  # ★ RN 重建选型与方案（旧 Capacitor → 原生 RN 的改造依据）
-├── 飞书同步配置指南.md     # ★ 飞书应用创建/凭证获取/数据表选择/字段映射/同步操作/FAQ（小白版）
-├── CS架构部署文档.md       # 部署操作手册（Windows/Linux 服务端、nginx、数据库、客户端）
-├── EXE客户端发布更新流程.md # ★ v3.7.1+ 客户端自更新机制说明与发版操作手册（构建→上传 client-update.json/exe→验证→回滚）
-├── CS架构改造变更摘要.md   # C/S 改造的变更明细
-├── 资产盘点模块技术文档.md # ★ 盘点模块需求/架构/数据结构/API/前端/UI/移动端/验证方案
-├── 手机App构建说明.md      # ★ RN 原生 APK 环境依赖/构建发布流程/踩坑记录/版本记录
+├── docs/                   # ★ 全部说明文档集中存放（索引见 docs/README.md）
+│   ├── README.md                    #   文档索引：分类标明每份文档的内容与适用读者
+│   ├── CS架构部署文档.md            #   部署操作手册（Windows/Linux/CentOS、nginx、数据库、客户端、自更新 7.5）
+│   ├── iStoreOS部署说明.md          #   软路由 iStoreOS Docker 部署
+│   ├── EXE客户端发布更新流程.md     #   v3.7.1+ 客户端自更新机制与发版操作手册
+│   ├── 飞书同步配置指南.md          #   飞书应用创建/数据表选择/字段映射/同步操作/FAQ（小白版）
+│   ├── 资产盘点模块技术文档.md      #   盘点模块需求/架构/数据结构/API/前端/UI/验证方案
+│   ├── 手机App构建说明.md           #   RN 原生 APK 环境依赖/构建发布流程/踩坑记录/版本记录
+│   ├── ReactNative重建方案.md       #   RN 重建选型与方案（旧 Capacitor → 原生 RN 的改造依据）
+│   ├── CS架构改造收口文档.md        #   C/S 改造收口验收记录
+│   └── CS架构改造变更摘要.md        #   C/S 改造的逐模块变更明细
 └── README.md
 ```
 
@@ -283,12 +287,13 @@ Electron 开发模式下 `Ctrl+R` 刷新窗口；浏览器调试时 `Ctrl+F5` �
 | nginx 报 cannot load certificate | 部署路径含中文，移到纯英文路径后重启服务 |
 | 忘记 admin 密码 | 三种方式：① 若有其他 admin 账号登录，可在"用户管理"页面重置；② 服务端执行 `node reset-admin.js 新密码`；③ 自己记得旧密码的话，顶栏直接点"修改密码"自助修改 |
 | 系统设置里看不到飞书同步卡片 | 旧版纯单机精简模式无飞书功能：升级 v2.5.0+ 便携版（单机自动拉起内置服务端）或连接 C/S 服务器；已连接仍看不到则 Ctrl+Shift+R 强刷；服务器前端过旧时让管理员更新前端文件 |
-| 飞书测试连接失败 | 按提示排查：App ID/Secret 错误或应用未发布（开放平台核对并发布版本）；表格无权限（飞书表内"···→添加文档应用"把应用加进多维表格）；缺权限（权限管理勾全多维表格权限后重新发布）。详见 [飞书同步配置指南.md](飞书同步配置指南.md) FAQ |
+| 飞书测试连接失败 | 按提示排查：App ID/Secret 错误或应用未发布（开放平台核对并发布版本）；表格无权限（飞书表内"···→添加文档应用"把应用加进多维表格）；缺权限（权限管理勾全多维表格权限后重新发布）。详见 [飞书同步配置指南.md](docs/飞书同步配置指南.md) FAQ |
 | 客户端连接服务器超时 | 地址不要带 `:3456`——生产部署（nginx）下 3456 仅监听 127.0.0.1，外部只能走 80/443；填 `http://<服务器IP>` 即可。排查：`curl http://<IP>/api/ping` |
 | 单机版飞书/用户管理没有反应 | 内置 asset-server 未拉起：查看 `%TEMP%\asset-desktop.log` 诊断日志；确认 `%APPDATA%\asset-management-system\connection.json` 未残留 `mode:client` 旧配置（残留会走 C/S 分支不启动内置进程，删除该文件回到单机模式） |
 | 深色主题下某块白底/文字看不清 | 多为内联硬编码浅色样式未跟随主题；已批量修复为 CSS 变量，如新增页面遇到同类问题，用工作区技能 `theme-color-fix` 扫描替换 |
 | 客户端收不到更新提示 | 仅 C/S 客户端模式检查更新（单机模式菜单"检查更新"会明确提示不支持）；确认服务器 `http://<服务器IP>/downloads/client-update.json` 可访问且 `version` 高于客户端版本；诊断日志见 `%TEMP%\asset-update.log`；EXE 必须是 v3.7.1 及以上构建（旧版无更新器，需手动分发一次新版） |
-| 更新下载后失败/没有重启 | 查看 `%TEMP%\asset-update.log`：`SHA256 不匹配` = 上传的 json 与 exe 哈希不一致（重新计算并更新 json）；`30秒内原文件仍被占用` = EXE 目录权限不足或被杀软拦截（对 EXE 目录加白名单后用菜单"检查更新"重试）；任何失败旧版本均原样保留可继续使用。完整排查见 [EXE客户端发布更新流程.md](EXE客户端发布更新流程.md) |
+| 更新下载后失败/没有重启 | 查看 `%TEMP%\asset-update.log`：`SHA256 不匹配` = 上传的 json 与 exe 哈希不一致（重新计算并更新 json）；`30秒内原文件仍被占用` = EXE 目录权限不足或被杀软拦截（对 EXE 目录加白名单后用菜单"检查更新"重试）；任何失败旧版本均原样保留可继续使用。完整排查见 [EXE客户端发布更新流程.md](docs/EXE客户端发布更新流程.md) |
+| 手机 App 收不到更新提示 | 仅 v1.1.0（versionCode 2）及以上支持应用内更新，v1.0.0 需先用浏览器访问 `http://192.168.40.247/downloads/asset-mgmt-rn-debug.apk` 手动覆盖安装一次；确认手机能打开 `http://192.168.40.247/downloads/apk-update.json` 且其 `versionCode` 大于本机版本（"我的→关于"可看当前版本）；安装器拒绝时核对包名/签名（不可换 debug.keystore）。详见 [手机App构建说明.md](docs/手机App构建说明.md) 第五章 |
 
 ## 打包部署
 
@@ -306,9 +311,9 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
 
 > **关于 PE 版本字符串**：electron-builder 通过 `rcedit-x64.exe` 写入 `FileDescription` / `ProductName` / `InternalName` 等 PE 资源字段，Windows 上该工具**必须以管理员权限运行**才能提交到文件的 `.rsrc` 节。`scripts/build-portable.js` 已内置自动提权逻辑：非管理员会话执行 `npm run build` 会自动弹 UAC，确认后以管理员重跑整个构建流程，无需手动右键"以管理员身份运行"。若跳过提权，rcedit 会报 `Fatal error: Unable to commit changes` 但 electron-builder 仍会重试 3 次后继续，构建产物可运行但"文件版本/产品名/内部名称"等字段会缺失（不影响功能，仅影响资源管理器属性页展示）。
 
-生产部署使用 `server/deploy/` 部署包（nginx 反代 + 自签证书 + NSSM 服务化，一键安装），完整手册见 **[CS架构部署文档.md](CS架构部署文档.md)**；Linux 服务器（systemd + nginx/certbot）见部署文档**第 11 章**。
+生产部署使用 `server/deploy/` 部署包（nginx 反代 + 自签证书 + NSSM 服务化，一键安装），完整手册见 **[CS架构部署文档.md](docs/CS架构部署文档.md)**；Linux 服务器（systemd + nginx/certbot）见部署文档**第 11 章**。
 
-**C/S 客户端 EXE 发版（v3.7.1+）**：客户端支持在线自更新后，发新版只需"构建 → 上传固定名 exe + client-update.json 到服务器下载目录"，已分发的客户端启动时自动发现并提示升级，无需逐台电脑手动替换。完整步骤（含 SHA256 计算、pscp 命令模板、验证与回滚）见 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**。注意：**v3.7.1 是首个带更新器的版本，这一版仍需手动分发一次**。
+**C/S 客户端 EXE 发版（v3.7.1+）**：客户端支持在线自更新后，发新版只需"构建 → 上传固定名 exe + client-update.json 到服务器下载目录"，已分发的客户端启动时自动发现并提示升级，无需逐台电脑手动替换。完整步骤（含 SHA256 计算、pscp 命令模板、验证与回滚）见 **[EXE客户端发布更新流程.md](docs/EXE客户端发布更新流程.md)**。注意：**v3.7.1 是首个带更新器的版本，这一版仍需手动分发一次**。
 
 **构建优化**：
 - `electronLanguages: ["zh-CN", "en-US"]` 仅保留中英文语言包
@@ -328,24 +333,31 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
   - **服务端零改动**：版本源为 nginx 已托管的静态目录（`http://<服务器>/downloads/client-update.json` + 固定文件名 `asset-mgmt-client.exe`）；当前生产已部署于 192.168.40.247
   - **一次性手动分发**：v3.7.1 是首个内置更新器的版本，已分发的旧 EXE 无更新能力，需手动分发替换一次；之后所有新版本客户端启动即自动提示升级
   - `package.json` 版本号 2.5.0 → 3.7.1 对齐系统版本线（EXE 内 `app.getVersion()` 以此参与版本比较）
-  - 新增操作手册 **[EXE客户端发布更新流程.md](EXE客户端发布更新流程.md)**；[CS架构部署文档.md](CS架构部署文档.md) 新增 7.5 节客户端更新机制
+  - 新增操作手册 **[EXE客户端发布更新流程.md](docs/EXE客户端发布更新流程.md)**；[CS架构部署文档.md](docs/CS架构部署文档.md) 新增 7.5 节客户端更新机制
   - 本地端到端验证：mock 服务器（127.0.0.1:3456）模拟"同版本无弹窗 / 9.9.9 大版本弹窗→确认→下载→校验→自替换→自动重启"全链路通过
 
+- **Android App v1.1.0**（versionCode 2，2026-09-13）— 手机 App 应用内自更新：
+  - **更新机制**：App 启动 6 秒后静默 GET 所连服务器的 `/downloads/apk-update.json`（10 秒超时，失败忽略）；"我的 → 关于 → 检查更新"可手动检查（含"已是最新版本/失败原因"提示）；发现新版弹窗显示版本号与更新说明，确认后应用内下载（原生线程 + 实时进度条，约 5fps 事件）→ **SHA-256 流式校验** → Android 8+ 申请"安装未知应用"授权（跳系统设置，授权返回后自动继续）→ FileProvider 调起系统安装器覆盖安装
+  - **实现**：原生 Kotlin `ApkUpdateModule`（下载落 `外部缓存/updates/update.apk.download`→校验→rename，事件 `ApkUpdateProgress`）+ `ApkUpdatePackage`（MainApplication 手动注册）；Manifest 加 `REQUEST_INSTALL_PACKAGES` 权限与 `${applicationId}.fileprovider`（res/xml/file_paths.xml）；JS 端 `utils/apkUpdate.ts` 桥接、`store/updateStore.ts` 状态、`components/UpdateModal.tsx`+`UpdateGate.tsx` 弹窗与启动检查；Settings 页"关于"区显示当前版本
+  - **判定口径**：以 `versionCode`（整数）严格递增为唯一更新依据，`versionName` 仅展示；APK 包名与 debug 签名保持不变才能覆盖安装（apksigner 证书指纹已核对）
+  - **服务端零改动**：复用 nginx `/downloads/`，新增静态文件 `apk-update.json`（UTF-8 无 BOM）；当前生产 v1.1.0 已部署（APK 199.8 MB，HTTP 200，服务器 sha256 与本地一致）
+  - **一次性手动安装**：v1.0.0（versionCode 1）旧 App 无更新器，员工需用手机浏览器访问 `http://192.168.40.247/downloads/asset-mgmt-rn-debug.apk` 覆盖安装一次；之后 App 版本升级全部应用内完成。发版流程见 **[手机App构建说明.md](docs/手机App构建说明.md)** 第五章
+
 - **v3.7.0** (2026-09-12) — React Native 原生 App 重建 + 飞书数据表选择器（[GitHub Release](https://github.com/jackie251818/asset-management-system/releases/tag/v3.7.0)，APK 资产 `asset-mgmt-rn-v3.7.apk`）：
-  - **手机 App 原生重建**：废弃并删除旧 Capacitor WebView 套壳工程（`mobile-app/`，6.2 MB），按 **[ReactNative重建方案.md](ReactNative重建方案.md)** 新建 `mobile-app-rn/`（RN 0.75.4 + TypeScript，旧架构 + Hermes）；React Navigation 四 Tab（首页/资产/盘点/我的）+ Stack，Zustand + MMKV 持久化，四套主题；JS bundle 内置 APK 可离线运行；APK 约 200 MB（四架构 + MLKit 模型），托管于 `http://192.168.40.247/downloads/`
+  - **手机 App 原生重建**：废弃并删除旧 Capacitor WebView 套壳工程（`mobile-app/`，6.2 MB），按 **[ReactNative重建方案.md](docs/ReactNative重建方案.md)** 新建 `mobile-app-rn/`（RN 0.75.4 + TypeScript，旧架构 + Hermes）；React Navigation 四 Tab（首页/资产/盘点/我的）+ Stack，Zustand + MMKV 持久化，四套主题；JS bundle 内置 APK 可离线运行；APK 约 200 MB（四架构 + MLKit 模型），托管于 `http://192.168.40.247/downloads/`
   - **原生扫码（VisionCamera v4 + MLKit）**：`useCameraDevice('back')` + `useCodeScanner`（v4 已移除 frame processor 式 scanBarcodes），root build.gradle 开启 `VisionCamera_enableCodeScanner`；扫码交互改"**一码一确认**"——扫到即暂停相机、底部弹出资产信息卡、人工点「确认盘点」才标记已盘，解决对准后连续重复计数
   - **联调修复（v1→v8 共 8 版）**：后端 `{code,data}` 响应解包导致的 MMKV 写入类型错误、RootNavigator MainTabs 标识符错误、盘点空数据 404 容错、MaterialCommunityIcons.ttf 未打包导致全图标方框；构建链解决中文路径（subst R 盘）、native_modules.gradle 管道死锁、foojay 自动下载卡死、mmkv 3.x 不支持旧架构等问题；发布流程固化为工作区技能 `rn-apk-deploy`（说"发布"自动 bundle→gradle→pscp 部署）
   - **飞书同步「选择数据表」下拉**：配置页 Table ID 下方新增加载该多维表格全部数据表的下拉（服务端新增 `GET/POST /api/feishu/tables`、`POST /api/feishu/fields`，支持表单临时凭证）；选表即静默保存并自动重载字段；已保存表被删除/重建时下拉红色告警 `⚠ 已不存在, 请重选`（解决错误码 1254041 TableIdNotFound，此前只能改数据库）；粘贴链接解析后自动选中链接中的表
   - **生产热更新**：`server/src/feishu-sync.js`、`server/src/routes/feishu.js`、`index.html`、`js/feishu-sync.js` 部署至 192.168.40.247 并重启 asset-server；临时修复失效默认表（选定字段全匹配的"花满堂"表）
   - **数据管理升级**：「清空所有数据」改为调用服务端事务接口（新增 `POST /api/data/clear`），删除全部资产(含维保/附件)+盘点批次与明细，统计报表同步归零，并触发数据版本指纹变化使手机 App 与其他电脑端同步为空（修复此前仅清本机内存导致手机端不同步）；新增「恢复出厂设置」按钮（`POST /api/data/factory-reset`，管理员+密码验证），清空全部业务数据、自定义下拉选项(字段信息)、系统设置/备份/飞书配置、审计日志与所有用户账号并重置为默认 admin/admin123，旧 JWT 失效后跳登录页；纯本地模式走双重确认清空本机
-  - 文档：重写 [手机App构建说明.md](手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](飞书同步配置指南.md）
+  - 文档：重写 [手机App构建说明.md](docs/手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](docs/飞书同步配置指南.md)
 
 - **v3.6** (2026-09-09) — 资产盘点模块 + Android 手机 App（**App 部分已被 v3.7.0 RN 原生版取代**）：
   - **资产盘点模块**：新增侧边栏「资产盘点」菜单；支持发起盘点批次（全部/按部门/按地点）、扫码盘点（手机 App 原生相机循环扫码）+ 列表勾选盘点双模式；每条资产标记 已盘/未盘到/异常（异常弹窗填备注）；实时进度条 + 4 统计卡（应盘/已盘/未盘到/异常）；筛选 + 搜索；完成后导出 Excel 报告（明细 + 汇总双 sheet）；多轮历史批次回看；资产快照防后续删改；乐观锁防多人并发覆盖
   - **数据存储**：盘点数据复用 `kv_store` 表（键 `inventory_sessions` 批次列表 + `inventory_session_<id>` 批次明细），经 `/api/save` `/api/load` `/api/delete` 兼容层读写，零基础设施改动
   - **权限放行**：`server/src/routes/compat.js` KV 白名单新增 `inventory_sessions` 与 `inventory_session_` 前缀；`/api/save` `/api/delete` 对盘点键放行 **viewer 只读角色**（所有登录用户均可盘点）；盘点写入/删除记 `inventory.save`/`inventory.delete` 审计日志
   - **新增文件**：`js/inventory.js`（完整 IIFE 模块）；修改 `js/config.js`（STORAGE_KEYS 加 2 常量）、`js/navigation.js`（pageHandlers 注册 inventory）、`index.html`（菜单 + 页面 + 3 弹窗 + 扫码遮罩 + 脚本引用）、`styles.css`（盘点卡片/徽章/行底色/遮罩样式，全 CSS 变量适配 4 主题）、`js/mobile-bridge.js`（新增 `scanForInventory` 循环扫码 + `stopInventoryScan`）
-  - **Android 手机 App**：Capacitor 6 工程（`mobile-app/`），APK 本地引导页配置服务器地址后远程加载业务页；原生 BarcodeScanner 扫码盘点 + Camera 拍照登记附件；业务页从服务器加载，**前端更新热上传即生效，无需重打 APK**；APK 6.2 MB，构建方法见 [手机App构建说明.md](手机App构建说明.md)
+  - **Android 手机 App**：Capacitor 6 工程（`mobile-app/`），APK 本地引导页配置服务器地址后远程加载业务页；原生 BarcodeScanner 扫码盘点 + Camera 拍照登记附件；业务页从服务器加载，**前端更新热上传即生效，无需重打 APK**；APK 6.2 MB，构建方法见 [手机App构建说明.md](docs/手机App构建说明.md)
   - **桌面端扫码降级**：桌面环境无相机时弹自定义输入框（替代原生 `prompt()`，规避 Electron v30+ 静默拦截），支持空格/逗号/换行分隔批量录入
   - **生产部署**：`192.168.40.247`（Ubuntu 22.04）经 pscp + sudo cp/chown 热更新 7 文件（compat.js 重启服务，前端文件免重启）；旧文件自动备份至 `/tmp/inv-backup-<timestamp>/`；缓存版本号 bump（styles.css v3.4.5、mobile-bridge.js v1.1.0）
 
@@ -359,8 +371,8 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
   - **标签打印规格型号修复**：`asset_label_print.html` 规格型号字段从 `asset.configuration`（空）改为 `asset.brandModel`，二维码纯文本 `createAssetText()` 同步修复
   - **Ubuntu 22.04 生产部署**：源码部署于 `/opt/asset-server/`（systemd `asset-server` 服务，node 监听 127.0.0.1:3456）+ nginx 反代 80/443（自签证书）+ ufw；客户端连接地址填 `http://<服务器IP>`（不带端口，3456 不对外）；前端改动 pscp 上传后 chown asset 即热生效，无需重启服务
   - 打包：便携版 `固定资产管理系统-便携版-2.5.0.exe`（78.1 MB，extraResources 含 asset-server.exe 72.8 MB）
-  - 配置手册：新增 **[飞书同步配置指南.md](飞书同步配置指南.md)**（面向使用者，含应用创建/权限发布/链接提取/字段映射/FAQ）
-  - **2026-09-04 生产热更新**：`192.168.40.247`（Ubuntu 22.04）经 pscp + sudo cp/chown 热更新 4 个前端文件——`js/print.js`（IPC 打印）、`js/feishu-sync.js`（飞书小白引导）、`asset_label_print.html`（brandModel 修复）、`index.html`（final_chart_fix.js 移除）。全部 HTTP 200 + 内容验证通过。详见 **[CS架构部署文档.md 11.14.1](CS架构部署文档.md)**
+  - 配置手册：新增 **[飞书同步配置指南.md](docs/飞书同步配置指南.md)**（面向使用者，含应用创建/权限发布/链接提取/字段映射/FAQ）
+  - **2026-09-04 生产热更新**：`192.168.40.247`（Ubuntu 22.04）经 pscp + sudo cp/chown 热更新 4 个前端文件——`js/print.js`（IPC 打印）、`js/feishu-sync.js`（飞书小白引导）、`asset_label_print.html`（brandModel 修复）、`index.html`（final_chart_fix.js 移除）。全部 HTTP 200 + 内容验证通过。详见 **[CS架构部署文档.md 11.14.1](docs/CS架构部署文档.md)**
 
 - **v3.4.4** (2026-09-03) — 系统名称全局生效修复（登录页/窗口标题）+ 兼容层白名单修复：
   - **登录页动态系统名称**：`login.html` 新增 `applySystemName()`，未登录时经免鉴权 `GET /api/load?key=systemSettings` 拉取系统名称，动态更新登录页 logo 文案与 `<title>`（Electron 窗口标题经 `page-title-updated` 同步）；fetch 失败时降级读 `localStorage.last_system_name` 缓存
