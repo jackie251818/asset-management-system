@@ -229,18 +229,131 @@ function bindDataDependentEventListeners() {
             });
         }
         
-        // 清空所有数据
-        document.getElementById('clear-all-data').addEventListener('click', function() {
-            if (confirm('确定要清空所有资产数据吗？此操作不可恢复！')) {
+        // 清空所有数据(C/S 模式调用服务端: 资产+维保+附件+盘点一并删除, 其他端自动同步)
+        document.getElementById('clear-all-data').addEventListener('click', async function() {
+            const csActive = typeof ApiClient !== 'undefined' && (ApiClient.csMode || ApiClient.embeddedMode);
+            if (csActive) {
+                if (!confirm('确定要清空所有业务数据吗？\n\n将删除: 全部资产(含维保记录/附件)、盘点批次与明细。\n统计报表由资产派生, 将一并归零。\n服务器端与手机端将同步为空。\n\n此操作不可恢复！')) return;
+                showLoadingIndicator();
+                try {
+                    const r = await ApiClient.request('POST', '/api/data/clear');
+                    // 清本机缓存(资产/盘点), 避免残留本地快照
+                    try {
+                        localStorage.removeItem(STORAGE_KEYS.ASSET_MANAGEMENT_DATA);
+                        localStorage.removeItem(STORAGE_KEYS.INVENTORY_SESSIONS);
+                    } catch (e) {}
+                    try { await storageManager.removeItem(STORAGE_KEYS.ASSET_MANAGEMENT_DATA); } catch (e) {}
+                    try { await storageManager.removeItem(STORAGE_KEYS.INVENTORY_SESSIONS); } catch (e) {}
+                    hideLoadingIndicator();
+                    if (typeof ApiClient.markLocalChange === 'function') ApiClient.markLocalChange();
+                    alert('所有业务数据已清空(服务器已同步): 资产 ' + (r.assets || 0) + ' 条、盘点批次 ' + (r.inventorySessions || 0) + ' 个');
+                    window.location.reload();   // 统一刷新统计/报表/列表/盘点各页面
+                } catch (e) {
+                    hideLoadingIndicator();
+                    alert('清空失败: ' + (e.message || e));
+                }
+                return;
+            }
+            // 纯本地模式: 清资产 + 盘点键
+            if (!confirm('确定要清空所有数据吗？(含资产、盘点批次)\n此操作不可恢复！')) return;
+            showLoadingIndicator();
+            try {
+                const sessions = await storageManager.getItem(STORAGE_KEYS.INVENTORY_SESSIONS) || [];
+                for (const s of sessions) {
+                    await storageManager.removeItem(STORAGE_KEYS.INVENTORY_SESSION_ITEM + s.id);
+                }
+                await storageManager.setItem(STORAGE_KEYS.INVENTORY_SESSIONS, []);
                 assetsData = [];
                 updateStatistics();
                 renderRecentAssets();
                 renderDamagedAssets();
                 renderAllAssets();
                 saveToLocalStorage();
+                hideLoadingIndicator();
                 alert('所有数据已清空');
+            } catch (e) {
+                hideLoadingIndicator();
+                alert('清空失败: ' + (e.message || e));
             }
         });
+
+        // ============ 恢复出厂设置 ============
+        const factoryBtn = document.getElementById('factory-reset-btn');
+        if (factoryBtn) {
+            factoryBtn.addEventListener('click', function() {
+                const csActive = typeof ApiClient !== 'undefined' && (ApiClient.csMode || ApiClient.embeddedMode);
+                if (!csActive) {
+                    // 纯本地模式: 无服务端账号体系, 双重确认后清空本机全部数据键
+                    if (!confirm('确定要恢复出厂设置吗？\n将清空本机全部数据(资产/盘点/字段选项/系统设置), 此操作不可恢复！')) return;
+                    if (!confirm('再次确认: 真的要清空本机全部数据吗？')) return;
+                    showLoadingIndicator();
+                    (async () => {
+                        try {
+                            for (const key of Object.values(STORAGE_KEYS)) {
+                                try { await storageManager.removeItem(key); } catch (e) {}
+                                try { localStorage.removeItem(key); } catch (e) {}
+                            }
+                            assetsData = [];
+                            updateStatistics();
+                            saveToLocalStorage();
+                            hideLoadingIndicator();
+                            alert('本机数据已全部清空(恢复出厂设置)');
+                            window.location.reload();
+                        } catch (e) {
+                            hideLoadingIndicator();
+                            alert('恢复出厂设置失败: ' + (e.message || e));
+                        }
+                    })();
+                    return;
+                }
+                // C/S 模式: 打开密码验证弹窗
+                const modal = document.getElementById('factory-reset-modal');
+                document.getElementById('factory-reset-password').value = '';
+                const err = document.getElementById('factory-reset-error');
+                err.style.display = 'none'; err.textContent = '';
+                modal.style.display = 'flex';
+                setTimeout(() => document.getElementById('factory-reset-password').focus(), 50);
+            });
+        }
+        const closeFactoryModal = () => {
+            const modal = document.getElementById('factory-reset-modal');
+            if (modal) modal.style.display = 'none';
+        };
+        const factoryCancel = document.getElementById('factory-reset-cancel');
+        if (factoryCancel) factoryCancel.addEventListener('click', closeFactoryModal);
+        const factoryClose = document.getElementById('factory-reset-close');
+        if (factoryClose) factoryClose.addEventListener('click', closeFactoryModal);
+        const factorySubmit = document.getElementById('factory-reset-submit');
+        if (factorySubmit) {
+            factorySubmit.addEventListener('click', async function() {
+                const pw = document.getElementById('factory-reset-password').value;
+                const err = document.getElementById('factory-reset-error');
+                if (!pw) { err.textContent = '请输入管理员密码'; err.style.display = 'block'; return; }
+                factorySubmit.disabled = true;
+                factorySubmit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 执行中...';
+                try {
+                    await ApiClient.request('POST', '/api/data/factory-reset', { password: pw });
+                    closeFactoryModal();
+                    alert('已恢复出厂设置。\n\n用户账号已重置为默认管理员:\n用户名: admin\n默认密码: admin123\n\n请使用默认账号重新登录。');
+                    try { localStorage.removeItem('cs_auth'); } catch (e) {}
+                    try { localStorage.removeItem(STORAGE_KEYS.ASSET_MANAGEMENT_DATA); } catch (e) {}
+                    try { localStorage.removeItem(STORAGE_KEYS.INVENTORY_SESSIONS); } catch (e) {}
+                    window.location.href = 'login.html';
+                } catch (e) {
+                    err.textContent = e.message || '恢复出厂设置失败';
+                    err.style.display = 'block';
+                } finally {
+                    factorySubmit.disabled = false;
+                    factorySubmit.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 确认恢复出厂';
+                }
+            });
+        }
+        const factoryPwd = document.getElementById('factory-reset-password');
+        if (factoryPwd) {
+            factoryPwd.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && factorySubmit) factorySubmit.click();
+            });
+        }
         
         // 备份数据功能 - 导出JSON文件
         document.getElementById('backup-data').addEventListener('click', function() {

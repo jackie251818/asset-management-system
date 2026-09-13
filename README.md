@@ -321,7 +321,8 @@ npm run build:linux  # Linux x64 产物 → server/dist/asset-server-linux（gli
   - **联调修复（v1→v8 共 8 版）**：后端 `{code,data}` 响应解包导致的 MMKV 写入类型错误、RootNavigator MainTabs 标识符错误、盘点空数据 404 容错、MaterialCommunityIcons.ttf 未打包导致全图标方框；构建链解决中文路径（subst R 盘）、native_modules.gradle 管道死锁、foojay 自动下载卡死、mmkv 3.x 不支持旧架构等问题；发布流程固化为工作区技能 `rn-apk-deploy`（说"发布"自动 bundle→gradle→pscp 部署）
   - **飞书同步「选择数据表」下拉**：配置页 Table ID 下方新增加载该多维表格全部数据表的下拉（服务端新增 `GET/POST /api/feishu/tables`、`POST /api/feishu/fields`，支持表单临时凭证）；选表即静默保存并自动重载字段；已保存表被删除/重建时下拉红色告警 `⚠ 已不存在, 请重选`（解决错误码 1254041 TableIdNotFound，此前只能改数据库）；粘贴链接解析后自动选中链接中的表
   - **生产热更新**：`server/src/feishu-sync.js`、`server/src/routes/feishu.js`、`index.html`、`js/feishu-sync.js` 部署至 192.168.40.247 并重启 asset-server；临时修复失效默认表（选定字段全匹配的"花满堂"表）
-  - 文档：重写 [手机App构建说明.md](手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](飞书同步配置指南.md)
+  - **数据管理升级**：「清空所有数据」改为调用服务端事务接口（新增 `POST /api/data/clear`），删除全部资产(含维保/附件)+盘点批次与明细，统计报表同步归零，并触发数据版本指纹变化使手机 App 与其他电脑端同步为空（修复此前仅清本机内存导致手机端不同步）；新增「恢复出厂设置」按钮（`POST /api/data/factory-reset`，管理员+密码验证），清空全部业务数据、自定义下拉选项(字段信息)、系统设置/备份/飞书配置、审计日志与所有用户账号并重置为默认 admin/admin123，旧 JWT 失效后跳登录页；纯本地模式走双重确认清空本机
+  - 文档：重写 [手机App构建说明.md](手机App构建说明.md)（RN 版，含 15 条踩坑记录与版本记录）；更新 [飞书同步配置指南.md](飞书同步配置指南.md）
 
 - **v3.6** (2026-09-09) — 资产盘点模块 + Android 手机 App（**App 部分已被 v3.7.0 RN 原生版取代**）：
   - **资产盘点模块**：新增侧边栏「资产盘点」菜单；支持发起盘点批次（全部/按部门/按地点）、扫码盘点（手机 App 原生相机循环扫码）+ 列表勾选盘点双模式；每条资产标记 已盘/未盘到/异常（异常弹窗填备注）；实时进度条 + 4 统计卡（应盘/已盘/未盘到/异常）；筛选 + 搜索；完成后导出 Excel 报告（明细 + 汇总双 sheet）；多轮历史批次回看；资产快照防后续删改；乐观锁防多人并发覆盖
