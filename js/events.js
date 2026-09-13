@@ -160,6 +160,131 @@ function bindDataDependentEventListeners() {
                         });
                     }
                 })();
+
+                // ============ 桌面 EXE 应用更新(设置页可见入口, 仅 connApi 存在时揭开) ============
+                try {
+                    const updateLine = document.getElementById('app-update-line');
+                    if (updateLine && window.connApi && typeof window.connApi.checkUpdate === 'function') {
+                        const updateBtn = document.getElementById('check-app-update');
+                        const updateStatus = document.getElementById('app-update-status');
+                        const progressWrap = document.getElementById('app-update-progress-wrap');
+                        const progressBar = document.getElementById('app-update-progress-bar');
+                        const progressText = document.getElementById('app-update-progress-text');
+                        const updateModal = document.getElementById('app-update-modal');
+                        const updateModalMsg = document.getElementById('app-update-modal-msg');
+                        const updateNotesWrap = document.getElementById('app-update-notes-wrap');
+                        const updateConfirm = document.getElementById('app-update-confirm');
+                        const updateCancel = document.getElementById('app-update-cancel');
+                        // 动态 innerHTML 必须直接写 svg(图标替换只在加载时执行一次, <i> 不会被替换)
+                        const BTN_ICON_SVG = '<svg class="svg-icon"><use xlink:href="#icon-sync-alt"></use></svg> ';
+
+                        function setUpdateStatus(text, color) {
+                            if (!updateStatus) return;
+                            updateStatus.textContent = text || '';
+                            updateStatus.style.color = color || 'var(--info-fg-soft, #6b86af)';
+                        }
+                        function setUpdateProgress(frac) {
+                            if (!progressWrap) return;
+                            progressWrap.style.display = 'inline';
+                            const pct = Math.round(Math.min(1, Math.max(0, frac)) * 100);
+                            if (progressBar) progressBar.style.width = pct + '%';
+                            if (progressText) progressText.textContent = pct + '%';
+                        }
+                        function setUpdateBtnBusy(busy, text) {
+                            if (!updateBtn) return;
+                            updateBtn.disabled = !!busy;
+                            updateBtn.innerHTML = BTN_ICON_SVG + (text || '检查更新');
+                        }
+                        function openUpdateModal() { if (updateModal) updateModal.classList.add('active'); }
+                        function closeUpdateModal() { if (updateModal) updateModal.classList.remove('active'); }
+
+                        // 下载进度 / 失败事件(注册一次; 成功后应用自动退出重启)
+                        if (typeof window.connApi.onUpdateProgress === 'function') {
+                            window.connApi.onUpdateProgress(function (frac) {
+                                setUpdateProgress(frac);
+                                if (frac >= 1) {
+                                    setUpdateStatus('下载完成，正在安装并自动重启…', 'var(--success-color, #16a34a)');
+                                } else {
+                                    setUpdateStatus('正在下载新版本 ' + Math.round(frac * 100) + '% …', 'var(--info-fg, #2b4a7a)');
+                                }
+                            });
+                        }
+                        if (typeof window.connApi.onUpdateError === 'function') {
+                            window.connApi.onUpdateError(function (payload) {
+                                setUpdateBtnBusy(false);
+                                if (progressWrap) progressWrap.style.display = 'none';
+                                setUpdateStatus('更新失败：' + ((payload && payload.message) || '未知错误'), 'var(--danger-color, #dc2626)');
+                            });
+                        }
+
+                        if (updateBtn) {
+                            updateBtn.addEventListener('click', async function () {
+                                setUpdateBtnBusy(true, '正在检查…');
+                                setUpdateStatus('正在检查更新…');
+                                if (progressWrap) progressWrap.style.display = 'none';
+                                let r;
+                                try {
+                                    r = await window.connApi.checkUpdate();
+                                } catch (e) {
+                                    setUpdateBtnBusy(false);
+                                    setUpdateStatus('检查失败：' + (e && e.message ? e.message : e), 'var(--danger-color, #dc2626)');
+                                    return;
+                                }
+                                if (!r) {
+                                    setUpdateBtnBusy(false);
+                                    setUpdateStatus('检查失败：主进程无响应', 'var(--danger-color, #dc2626)');
+                                    return;
+                                }
+                                if (r.status === 'available') {
+                                    setUpdateBtnBusy(false);
+                                    if (updateModalMsg) updateModalMsg.textContent = '发现新版本 v' + (r.version || '?') + '（当前 v' + (r.current || '?') + '），是否立即更新？';
+                                    if (updateNotesWrap) {
+                                        if (r.notes) { updateNotesWrap.textContent = r.notes; updateNotesWrap.style.display = 'block'; }
+                                        else { updateNotesWrap.textContent = ''; updateNotesWrap.style.display = 'none'; }
+                                    }
+                                    openUpdateModal();
+                                    return;
+                                }
+                                setUpdateBtnBusy(false);
+                                if (r.status === 'latest') {
+                                    setUpdateStatus('当前已是最新版本（v' + (r.current || '') + '）', 'var(--success-color, #16a34a)');
+                                } else if (r.status === 'standalone' || r.status === 'running') {
+                                    setUpdateStatus(r.message || '当前模式不支持在线更新，请切换到客户端模式（连接服务器）', '#b45309');
+                                } else {
+                                    setUpdateStatus(r.message || ('检查结果：' + r.status), 'var(--danger-color, #dc2626)');
+                                }
+                            });
+                        }
+
+                        if (updateCancel) updateCancel.addEventListener('click', closeUpdateModal);
+                        if (updateConfirm) {
+                            updateConfirm.addEventListener('click', async function () {
+                                closeUpdateModal();
+                                setUpdateBtnBusy(true, '下载中…');
+                                setUpdateProgress(0);
+                                setUpdateStatus('开始下载新版本…', 'var(--info-fg, #2b4a7a)');
+                                let r;
+                                try {
+                                    r = await window.connApi.applyUpdate();
+                                } catch (e) {
+                                    setUpdateBtnBusy(false);
+                                    setUpdateStatus('更新失败：' + (e && e.message ? e.message : e), 'var(--danger-color, #dc2626)');
+                                    return;
+                                }
+                                if (!r || !r.ok) {
+                                    setUpdateBtnBusy(false);
+                                    if (progressWrap) progressWrap.style.display = 'none';
+                                    setUpdateStatus((r && r.message) || '更新启动失败', 'var(--danger-color, #dc2626)');
+                                }
+                                // 成功: 进度由 update:progress 事件驱动, 下载完成后应用自动退出重启
+                            });
+                        }
+
+                        updateLine.style.display = 'block';
+                    }
+                } catch (e) {
+                    console.warn('[events] 应用更新入口初始化失败：', e && e.message ? e.message : e);
+                }
             }
         } catch (e) {
             // 数据目录面板为可选增强,失败不阻塞其余逻辑

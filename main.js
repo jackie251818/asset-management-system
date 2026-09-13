@@ -1498,8 +1498,20 @@ function getUpdateProgressWindow() {
     return (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : null;
 }
 
-/** 下载 + 校验 + 替换 + 重启(调用前已确认) */
-async function downloadAndApplyUpdate(info) {
+/** 向渲染进程(设置页)推送更新事件: update:progress(0~1) / update:error({message}) */
+function sendUpdateEvent(channel, payload) {
+    const w = getUpdateProgressWindow();
+    if (w) {
+        try { w.webContents.send(channel, payload); } catch (_) {}
+    }
+}
+
+/**
+ * 下载 + 校验 + 替换 + 重启(调用前已确认)。
+ * opts.inPage=true: 由设置页触发, 下载进度/失败经 IPC 事件推给渲染进程, 不弹系统对话框。
+ */
+async function downloadAndApplyUpdate(info, opts) {
+    opts = opts || {};
     const url = /^https?:\/\//i.test(String(info.url || ''))
         ? String(info.url)
         : updateServerOrigin + '/downloads/' + UPDATE_CFG.exeName;
@@ -1510,8 +1522,10 @@ async function downloadAndApplyUpdate(info) {
         updateLog('开始下载: ' + url);
         if (win) win.setProgressBar(0);
         await downloadUpdateFile(url, tmp, (frac) => {
+            const v = Math.min(1, Math.max(0, frac));
             const w = getUpdateProgressWindow();
-            if (w) w.setProgressBar(Math.min(1, Math.max(0, frac)));
+            if (w) w.setProgressBar(v);
+            if (opts.inPage) sendUpdateEvent('update:progress', v);
         });
         const w2 = getUpdateProgressWindow();
         if (w2) w2.setProgressBar(-1);
@@ -1524,6 +1538,7 @@ async function downloadAndApplyUpdate(info) {
             }
             updateLog('SHA256 校验通过');
         }
+        if (opts.inPage) sendUpdateEvent('update:progress', 1);
         selfReplaceAndRestart(tmp);
     } catch (e) {
         updateRunning = false;
@@ -1531,14 +1546,18 @@ async function downloadAndApplyUpdate(info) {
         if (w3) w3.setProgressBar(-1);
         try { fs.unlinkSync(tmp); } catch (_) {}
         updateLog('更新失败: ' + e.message);
-        dialog.showMessageBox({
-            type: 'error',
-            title: '更新失败',
-            message: '更新失败',
-            detail: e.message,
-            buttons: ['确定'],
-            noLink: true
-        });
+        if (opts.inPage) {
+            sendUpdateEvent('update:error', { message: e.message });
+        } else {
+            dialog.showMessageBox({
+                type: 'error',
+                title: '更新失败',
+                message: '更新失败',
+                detail: e.message,
+                buttons: ['确定'],
+                noLink: true
+            });
+        }
     }
 }
 
@@ -1577,50 +1596,63 @@ async function silentCheckForUpdate() {
     } catch (_) { /* 静默失败 */ }
 }
 
-/** 手动检查(菜单入口): 有明确结果提示 */
-async function manualCheckForUpdate() {
+/**
+ * 检查更新核心逻辑(菜单入口与设置页 IPC 共用): 返回结构化结果, 不弹任何系统对话框。
+ * status: 'dev'(未打包) | 'standalone'(单机模式) | 'running'(更新中) |
+ *         'error'(取不到更新信息) | 'latest'(已是最新) | 'available'(有新版本)
+ */
+async function checkUpdateResult() {
+    const current = app.getVersion();
     if (!app.isPackaged) {
-        dialog.showMessageBox({ type: 'info', title: '检查更新', message: '开发环境不支持在线更新', buttons: ['确定'], noLink: true });
-        return;
+        return { status: 'dev', current, message: '开发环境不支持在线更新' };
     }
     if (!updateServerOrigin) {
-        dialog.showMessageBox({
-            type: 'info',
-            title: '检查更新',
-            message: '当前为单机模式, 不支持在线更新',
-            detail: '在线更新仅在"客户端模式"(连接服务器)下可用。\n可通过菜单"设置 → 连接服务器设置…"切换到客户端模式。',
-            buttons: ['确定'],
-            noLink: true
-        });
-        return;
+        return {
+            status: 'standalone', current,
+            message: '当前为单机模式，不支持在线更新。在线更新仅在"客户端模式"(连接服务器)下可用。'
+        };
     }
     if (updateRunning) {
-        dialog.showMessageBox({ type: 'info', title: '检查更新', message: '更新正在进行中, 请稍候', buttons: ['确定'], noLink: true });
-        return;
+        return { status: 'running', current, message: '更新正在进行中，请稍候' };
     }
     const info = await fetchUpdateJson(updateServerOrigin);
     if (!info || !info.version) {
-        dialog.showMessageBox({
-            type: 'warning',
-            title: '检查更新',
-            message: '无法获取更新信息',
-            detail: `无法连接更新源: ${updateServerOrigin}${UPDATE_CFG.jsonPath}\n请检查网络连接或稍后重试。`,
-            buttons: ['确定'],
-            noLink: true
-        });
+        return {
+            status: 'error', current,
+            message: `无法连接更新源：${updateServerOrigin}${UPDATE_CFG.jsonPath}，请检查网络后重试。`
+        };
+    }
+    if (compareVersions(String(info.version), current) > 0) {
+        return {
+            status: 'available', current,
+            version: String(info.version),
+            notes: info.notes ? String(info.notes) : '',
+            info
+        };
+    }
+    return { status: 'latest', current, version: String(info.version) };
+}
+
+/** 手动检查(菜单入口): 有明确结果提示 */
+async function manualCheckForUpdate() {
+    const r = await checkUpdateResult();
+    if (r.status === 'available') {
+        await promptAndApplyUpdate(r.info);
         return;
     }
-    if (compareVersions(String(info.version), app.getVersion()) > 0) {
-        await promptAndApplyUpdate(info);
-    } else {
-        dialog.showMessageBox({
+    const dialogMap = {
+        dev: { type: 'info', message: '开发环境不支持在线更新' },
+        standalone: {
             type: 'info',
-            title: '检查更新',
-            message: `当前已是最新版本 v${app.getVersion()}`,
-            buttons: ['确定'],
-            noLink: true
-        });
-    }
+            message: '当前为单机模式, 不支持在线更新',
+            detail: '在线更新仅在"客户端模式"(连接服务器)下可用。\n可通过菜单"设置 → 连接服务器设置…"切换到客户端模式。'
+        },
+        running: { type: 'info', message: '更新正在进行中, 请稍候' },
+        error: { type: 'warning', message: '无法获取更新信息', detail: r.message },
+        latest: { type: 'info', message: `当前已是最新版本 v${r.current}` }
+    };
+    const cfg = dialogMap[r.status] || { type: 'info', message: '检查更新未返回有效结果' };
+    dialog.showMessageBox(Object.assign({ title: '检查更新', buttons: ['确定'], noLink: true }, cfg));
 }
 
 /**
@@ -1735,6 +1767,33 @@ function registerConnectionIpc() {
             mainLog('[print] printCard 异常:' + err.message);
             return { ok: false, error: err.message };
         }
+    });
+
+    // ============ 应用自更新(设置页可见入口) ============
+    // 检查: 返回结构化状态 {status,current,version,notes,message}, 不弹系统对话框
+    ipcMain.handle('update:check', async () => {
+        const r = await checkUpdateResult();
+        // 不向渲染层回传下载地址/哈希等内部信息, 安装时由主进程重新拉取
+        return {
+            status: r.status,
+            current: r.current || '',
+            version: r.version || '',
+            notes: r.notes || '',
+            message: r.message || ''
+        };
+    });
+
+    // 确认安装: 主进程重新校验更新信息后下载 → SHA256 校验 → 自替换重启
+    // 成功时应用会退出; 下载进度/失败经 update:progress / update:error 事件推送
+    ipcMain.handle('update:apply', async () => {
+        if (updateRunning) return { ok: false, message: '更新正在进行中，请稍候' };
+        const r = await checkUpdateResult();
+        if (r.status !== 'available') {
+            return { ok: false, message: r.message || '当前没有可用更新' };
+        }
+        updateLog(`设置页触发更新: v${r.current} → v${r.version}`);
+        downloadAndApplyUpdate(r.info, { inPage: true });
+        return { ok: true };
     });
 
     // ============ 服务端信息 + 数据同步 ============
