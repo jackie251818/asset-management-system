@@ -8,12 +8,13 @@
 |---|---|---|
 | `asset-mgmt-client.exe` | EXE 客户端自更新下载包 | ✅ 固定名，客户端按名请求 |
 | `client-update.json` | EXE 客户端版本源 | ✅ 固定名 |
-| `asset-mgmt-rn-debug.apk` | 手机 App 自更新下载包 | ✅ 固定名 |
-| `apk-update.json` | 手机 App 版本源 | ✅ 固定名 |
+| `asset-mgmt-rn-debug.apk` | Android App 自更新下载包 | ✅ 固定名 |
+| `apk-update.json` | Android App 版本源 | ✅ 固定名 |
+| `ios-update.json` | iOS App 版本源（跳 TestFlight） | ✅ 固定名 |
 
 ## 重要：新服务器初始状态
 
-新部署的服务器 **不要** 预置任何 `client-update.json` / `apk-update.json`（本目录两个模板文件都带 `.template` 后缀，不会被客户端识别）。原因：
+新部署的服务器 **不要** 预置任何 `client-update.json` / `apk-update.json` / `ios-update.json`（本目录三个模板文件都带 `.template` 后缀，不会被客户端识别）。原因：
 
 - 旧版客户端（无更新器）不受影响；但**已启用更新器的客户端**启动时会检查版本源，若 JSON 里 versionCode/version 大于客户端当前值，会弹更新提示，而新服务器上没有对应安装包 → 下载 404 报错。
 - 首次正式发版时，按流程手册生成真实 JSON 上传后再启用。
@@ -29,3 +30,4 @@
 
 - `client-update.json.template`：`version`（语义化版本，大于客户端当前值才触发）、`url`（可省略，默认 `<服务器地址>/downloads/asset-mgmt-client.exe`）、`notes`、`sha256`（提供则强制校验）、`publishedAt`
 - `apk-update.json.template`：`versionCode`（整数，**唯一更新判定依据**，必须 +1）、`versionName`（仅展示）、`url`、`notes`（`\n` 分行）、`sha256`、`publishedAt`
+- `ios-update.json.template`：`bundleVersion`（整数，对应 iOS Info.plist CFBundleVersion，**唯一更新判定依据**）、`versionName`、`url`（TestFlight 公开邀请链接 `https://testflight.apple.com/join/XXXXX`）、`notes`、`publishedAt`

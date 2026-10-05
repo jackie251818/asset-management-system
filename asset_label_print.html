@@ -458,7 +458,24 @@
 
             // 优先从服务器 API 加载
             try {
-                const resp = await fetch('/api/load?key=assetManagementData');
+                const headers = {};
+                // Electron 单机内嵌模式：使用注入的 server token
+                if (window.__SERVER_TOKEN__) {
+                    headers['X-Server-Token'] = window.__SERVER_TOKEN__;
+                }
+                // C/S 模式：使用 JWT token
+                else {
+                    try {
+                        const raw = localStorage.getItem('cs_auth');
+                        if (raw) {
+                            const auth = JSON.parse(raw);
+                            if (auth && auth.token) {
+                                headers['Authorization'] = 'Bearer ' + auth.token;
+                            }
+                        }
+                    } catch (e) { /* 忽略 */ }
+                }
+                const resp = await fetch('/api/load?key=assetManagementData', { headers });
                 if (resp.ok) {
                     const result = await resp.json();
                     const raw = result.data || result;
