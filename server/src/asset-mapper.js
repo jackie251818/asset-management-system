@@ -61,6 +61,7 @@ function validateAssetDoc(doc) {
                 size: parseInt(a.size, 10) || 0,
                 url: typeof a.url === 'string' ? a.url : null,
                 thumbnail: typeof a.thumbnail === 'string' ? a.thumbnail : null,
+                _file_token: a._file_token || null,
             }))
         : [];
     return { doc: clean, errors: [] };

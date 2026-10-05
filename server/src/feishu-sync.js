@@ -192,6 +192,7 @@ class FeishuBitableClient {
 function docToFields(doc, mappings) {
     const fields = {};
     for (const m of mappings) {
+        if (m.type === 'attachment') continue; // 附件走独立上传流程, 不在标量映射内
         const val = doc[m.localField];
         if (val === undefined || val === null || val === '') { continue; }
         switch (m.type) {
@@ -223,11 +224,25 @@ function recordToDoc(record, mappings, idField) {
     if (!doc.brandModel) doc.brandModel = '';
     if (!doc.department) doc.department = '未分配';
     if (!doc.purchaseDate) doc.purchaseDate = new Date().toISOString().split('T')[0];
+    // 附件字段: 规范化为元信息数组(保留 _file_token 供后续下载), 二进制在事务外下载后填 url
+    for (const m of mappings) {
+        if (m.type !== 'attachment') continue;
+        const raw = doc[m.localField];
+        doc[m.localField] = (Array.isArray(raw) ? raw : []).map(a => ({
+            name: (a && a.name) || '附件',
+            type: (a && a.type) || '',
+            size: (a && a.size) || 0,
+            url: null,
+            thumbnail: null,
+            _file_token: (a && a.file_token) || null
+        }));
+    }
     return doc;
 }
 
 function normalizeFeishuValue(v, type) {
     if (v === undefined || v === null) return null;
+    if (type === 'attachment') return Array.isArray(v) ? v : [];
     if (type === 'text' && Array.isArray(v)) {
         // 飞书文本字段返回 [{text: "..."}] 数组
         return v.map(seg => (seg && seg.text) || '').join('');
@@ -247,7 +262,84 @@ function parseDateToMs(val) {
 
 function hashFields(doc, mappings) {
     const fields = docToFields(doc, mappings);
+    // 附件指纹: 仅取 name:size(本地与飞书两侧均可获得), 变化即触发记录更新并重传附件
+    for (const m of mappings) {
+        if (m.type !== 'attachment') continue;
+        const list = Array.isArray(doc[m.localField]) ? doc[m.localField] : [];
+        fields['__att:' + m.feishuField] = list.map(a => String(a && a.name || '') + ':' + String(a && a.size || 0));
+    }
     return crypto.createHash('md5').update(JSON.stringify(fields)).digest('hex');
+}
+
+// ============ 附件: 下载(飞书 → 本地) ============
+async function downloadFeishuMedia(cfg, fileToken, retry = 0) {
+    const token = await getTenantAccessToken(cfg);
+    const resp = await fetch(`${FEISHU_BASE}/open-apis/drive/v1/medias/${fileToken}/download`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (resp.status === 401 && retry === 0) {
+        invalidateToken();
+        return downloadFeishuMedia(cfg, fileToken, 1);
+    }
+    if (!resp.ok) {
+        const txt = await resp.text().catch(() => '');
+        throw new Error('附件下载失败 ' + fileToken + ' (HTTP ' + resp.status + '): ' + txt.slice(0, 120));
+    }
+    const mime = (resp.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim();
+    return { buffer: Buffer.from(await resp.arrayBuffer()), mime };
+}
+
+// ============ 附件: 上传(本地 → 飞书), 单文件 ≤20MB ============
+async function uploadFeishuMedia(cfg, buffer, fileName, mime, retry = 0) {
+    if (buffer.length > 20 * 1024 * 1024) {
+        throw new Error('附件「' + fileName + '」超过 20MB, 飞书多维表格不支持');
+    }
+    const token = await getTenantAccessToken(cfg);
+    const form = new FormData();
+    form.append('file_name', fileName);
+    form.append('parent_type', 'bitable_file');
+    form.append('parent_node', cfg.appToken);
+    form.append('size', String(buffer.length));
+    form.append('file', new Blob([buffer], { type: mime || 'application/octet-stream' }), fileName);
+    const resp = await fetch(FEISHU_BASE + '/open-apis/drive/v1/medias/upload_all', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token },
+        body: form
+    });
+    if (resp.status === 401 && retry === 0) {
+        invalidateToken();
+        return uploadFeishuMedia(cfg, buffer, fileName, mime, 1);
+    }
+    const data = await resp.json().catch(() => null);
+    if (!data || data.code !== 0) {
+        throw new Error('附件「' + fileName + '」上传失败: ' + (data ? data.code + ' ' + data.msg : 'HTTP ' + resp.status));
+    }
+    return data.data.file_token;
+}
+
+function dataUrlToBuffer(dataUrl) {
+    const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(dataUrl || '');
+    if (!m || !m[2]) return null;
+    return { buffer: Buffer.from(m[3], 'base64'), mime: m[1] || 'application/octet-stream' };
+}
+
+// 组装含附件的飞书字段: 本地有附件才上传并覆盖飞书侧; 本地无附件则不动飞书附件字段
+async function buildFieldsWithAttachments(cfg, doc, mappings) {
+    const fields = docToFields(doc, mappings);
+    for (const m of mappings) {
+        if (m.type !== 'attachment') continue;
+        const atts = Array.isArray(doc[m.localField]) ? doc[m.localField] : [];
+        if (!atts.length) continue;
+        const tokens = [];
+        for (const a of atts) {
+            const parsed = dataUrlToBuffer(a.url);
+            if (!parsed) continue;
+            const fileToken = await uploadFeishuMedia(cfg, parsed.buffer, a.name || '附件', a.type || parsed.mime);
+            tokens.push({ file_token: fileToken });
+        }
+        if (tokens.length) fields[m.feishuField] = tokens;
+    }
+    return fields;
 }
 
 // ============ 推送: 系统 → 飞书(按主体路由到对应表) ============
@@ -312,13 +404,23 @@ async function pushToFeishu(options = {}) {
             }
         }
 
-        // 4. 按表批量创建
+        // 4. 按表批量创建(含附件上传, 上传失败的资产转入 failed, 保持批次下标对齐)
         let created = 0;
         for (const [tableId, tableDocs] of creates) {
-            const createRecords = tableDocs.map(doc => ({ fields: docToFields(doc, mappings) }));
+            const createRecords = [];
+            const validDocs = [];
+            for (const doc of tableDocs) {
+                try {
+                    createRecords.push({ fields: await buildFieldsWithAttachments(cfg, doc, mappings) });
+                    validDocs.push(doc);
+                } catch (e) {
+                    failed.push({ id: doc.id, error: e.message });
+                }
+            }
+            if (!createRecords.length) continue;
             const createdRecords = await client.batchCreate(createRecords, tableId);
-            for (let i = 0; i < tableDocs.length && i < createdRecords.length; i++) {
-                const doc = tableDocs[i];
+            for (let i = 0; i < validDocs.length && i < createdRecords.length; i++) {
+                const doc = validDocs[i];
                 const recordId = createdRecords[i].record_id;
                 const currentHash = hashFields(doc, mappings);
                 db.prepare(`
@@ -332,15 +434,25 @@ async function pushToFeishu(options = {}) {
             }
         }
 
-        // 5. 按表批量更新
+        // 5. 按表批量更新(含附件上传)
         let updated = 0;
         for (const [tableId, items] of updates) {
-            const updateRecords = items.map(item => ({
-                record_id: item.record_id,
-                fields: docToFields(item.doc, mappings)
-            }));
-            await client.batchUpdate(updateRecords, tableId);
+            const updateRecords = [];
+            const validItems = [];
             for (const item of items) {
+                try {
+                    updateRecords.push({
+                        record_id: item.record_id,
+                        fields: await buildFieldsWithAttachments(cfg, item.doc, mappings)
+                    });
+                    validItems.push(item);
+                } catch (e) {
+                    failed.push({ id: item.doc.id, error: e.message });
+                }
+            }
+            if (!updateRecords.length) continue;
+            await client.batchUpdate(updateRecords, tableId);
+            for (const item of validItems) {
                 db.prepare(`
                     UPDATE feishu_sync_state
                     SET last_synced_at = datetime('now','localtime'), table_id = ?,
@@ -448,6 +560,35 @@ async function pullFromFeishu(options = {}) {
             perTable.push({ table: t.name, tableId: t.table_id, total: records.length, created: tNew, updated: tUpdate, skipped: tSkip, invalid: tInvalid });
         }
 
+        // 2.5 附件下载(仅对需要写入的记录, 事务外完成网络IO; 单附件失败跳过该附件)
+        let attachmentDownloaded = 0, attachmentFailed = 0;
+        if (mappings.some(m => m.type === 'attachment')) {
+            for (const doc of [...newDocs, ...updateDocs]) {
+                const refs = Array.isArray(doc.attachments) ? doc.attachments : [];
+                if (!refs.length) continue;
+                const downloaded = [];
+                for (const ref of refs) {
+                    if (!ref._file_token) continue;
+                    try {
+                        const { buffer, mime } = await downloadFeishuMedia(cfg, ref._file_token);
+                        const attMime = ref.type || mime;
+                        downloaded.push({
+                            name: ref.name,
+                            type: attMime,
+                            size: buffer.length,
+                            url: 'data:' + attMime + ';base64,' + buffer.toString('base64'),
+                            thumbnail: null
+                        });
+                        attachmentDownloaded++;
+                    } catch (e) {
+                        attachmentFailed++;
+                        invalid.push({ table: doc._table_id, record_id: doc._record_id, id: doc.id, errors: ['附件下载失败: ' + e.message] });
+                    }
+                }
+                doc.attachments = downloaded;
+            }
+        }
+
         // 3. 事务写入(本地写入失败回滚, 不污染飞书侧状态)
         let created = 0, updated = 0;
         db.transaction(() => {
@@ -469,7 +610,7 @@ async function pullFromFeishu(options = {}) {
         saveOwnerTableMap(ownerTableMap);
 
         // 5. 审计 + 更新配置状态
-        const stats = { created, updated, skipped: skipNoChange, invalid, total: totalRecords, perTable };
+        const stats = { created, updated, skipped: skipNoChange, invalid, total: totalRecords, perTable, attachmentDownloaded, attachmentFailed };
         cfg.lastSyncAt = new Date().toISOString();
         cfg.lastSyncDirection = 'pull';
         cfg.lastSyncStats = stats;
@@ -517,7 +658,8 @@ const FIELD_NAME_HINTS = {
     depreciationYears: ['折旧年限', '折旧'],
     purchaseNo: ['采购编号', '采购单号'],
     paymentNo: ['付款编号', '付款单号'],
-    damageReason: ['损坏原因']
+    damageReason: ['损坏原因'],
+    attachments: ['附件', '照片', '图片', '文件']
 };
 
 const FIELD_TYPE_MAP = {
@@ -525,7 +667,8 @@ const FIELD_TYPE_MAP = {
     configuration: 'text', purchaseDate: 'date', status: 'single_select',
     user: 'text', department: 'text', location: 'text', manager: 'text',
     unit: 'text', quantity: 'number', value: 'number',
-    depreciationYears: 'number', purchaseNo: 'text', paymentNo: 'text', damageReason: 'text'
+    depreciationYears: 'number', purchaseNo: 'text', paymentNo: 'text', damageReason: 'text',
+    attachments: 'attachment'
 };
 
 async function autoDetectFieldMappings(cfg) {

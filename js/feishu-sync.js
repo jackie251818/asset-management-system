@@ -337,6 +337,7 @@
             depreciationYears: '折旧年限',
             purchaseNo: '采购编号',
             paymentNo: '付款编号',
+            attachments: '附件',
         },
 
         // 本地字段类型（与服务端 FIELD_TYPE_MAP 一致）
@@ -345,7 +346,8 @@
             configuration: 'text', purchaseDate: 'date', status: 'single_select',
             user: 'text', department: 'text', location: 'text', manager: 'text',
             unit: 'text', quantity: 'number', value: 'number',
-            depreciationYears: 'number', purchaseNo: 'text', paymentNo: 'text', damageReason: 'text'
+            depreciationYears: 'number', purchaseNo: 'text', paymentNo: 'text', damageReason: 'text',
+            attachments: 'attachment'
         },
 
         // 智能匹配关键词（本地字段 → 飞书字段名可能包含的词）
@@ -368,6 +370,7 @@
             depreciationYears: ['折旧', '年限'],
             purchaseNo: ['采购流程', '采购编号'],
             paymentNo: ['付款流程', '付款编号'],
+            attachments: ['附件', '照片', '图片', '文件'],
         },
 
         // 字段类型中文名
@@ -377,6 +380,7 @@
             date: '日期',
             single_select: '单选',
             multi_select: '多选',
+            attachment: '附件',
         },
 
         /** 🆕 加载飞书字段后, 自动为全部本地字段生成映射行(智能预选同名飞书字段) */
