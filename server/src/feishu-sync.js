@@ -525,6 +525,9 @@ async function pullFromFeishu(options = {}) {
         // 1. 读取本地资产 + 同步状态
         const localRows = db.prepare('SELECT id, updated_at, version FROM assets').all();
         const localMap = new Map(localRows.map(r => [r.id, r]));
+        // 本地完整文档(供 update 时保留未映射字段/维保记录, 防止 pull 把未映射字段清成 null)
+        const localDocs = new Map(rowsToDocs(db.prepare('SELECT * FROM assets').all()).map(d => [d.id, d]));
+        const mappedLocalFields = new Set(mappings.filter(m => m.feishuField).map(m => m.localField));
         const stateRows = db.prepare('SELECT * FROM feishu_sync_state').all();
         const stateMap = new Map(stateRows.map(r => [r.record_id, r]));
 
@@ -587,6 +590,19 @@ async function pullFromFeishu(options = {}) {
                 }
             }
             perTable.push({ table: t.name, tableId: t.table_id, total: records.length, created: tNew, updated: tUpdate, skipped: tSkip, invalid: tInvalid });
+        }
+
+        // 2.4 update 记录: 未映射字段与维保记录保留本地值(飞书无对应列, 不能清成 null)
+        //     附件例外: 若配置了附件映射则完全以飞书为准(后面下载覆盖); 未配置附件映射同样保留本地
+        for (const doc of updateDocs) {
+            const local = localDocs.get(doc.id);
+            if (!local) continue;
+            for (const f of ASSET_FIELDS) {
+                if (f === 'id') continue;
+                if (!mappedLocalFields.has(f)) doc[f] = local[f];
+            }
+            if (!mappedLocalFields.has('attachments')) doc.attachments = local.attachments;
+            doc.maintenanceRecords = local.maintenanceRecords;
         }
 
         // 2.5 附件下载(仅对需要写入的记录, 事务外完成网络IO; 单附件失败跳过该附件)
