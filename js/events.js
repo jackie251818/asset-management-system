@@ -847,8 +847,9 @@ function bindDataDependentEventListeners() {
         if (!modal) {
             modal = getElement('image-viewer-modal');
         }
-        if (!closeBtn) {
-            closeBtn = document.querySelector('.close-btn');
+        if (!closeBtn && modal) {
+            // 页面上有多个 .close-btn(盘点/修改密码等弹窗), 必须限定在图片查看器内
+            closeBtn = modal.querySelector('.close-btn');
         }
         
         // 关闭文件查看器
