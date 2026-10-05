@@ -347,6 +347,44 @@ function viewAssetDetails(assetId) {
     }, 50); // 50ms防抖延迟
 }
 
+// 判断 HEIC/HEIF
+function isHeicAttachment(att) {
+    return /\.(heic|heif)$/i.test(att.name || '') ||
+           /^image\/hei(c|f)/i.test(att.type || '');
+}
+
+// HEIC 服务端预览 URL(经鉴权 blob 拉取), 内存缓存 objectURL
+// 优先服务端转换(libheif 1.2x, 兼容 iPhone HDR); 失败由调用方回退 heic2any/下载
+const __heicUrlCache = new Map();
+function fetchHeicPreviewUrl(assetId, name, thumb) {
+    const key = assetId + '|' + name + '|' + (thumb ? 1 : 0);
+    if (__heicUrlCache.has(key)) return Promise.resolve(__heicUrlCache.get(key));
+    const url = '/api/attachments/preview?asset_id=' + encodeURIComponent(assetId)
+        + '&name=' + encodeURIComponent(name) + (thumb ? '&thumb=1' : '');
+    const p = ApiClient.fetchBlob(url).then(blob => {
+        const u = URL.createObjectURL(blob);
+        __heicUrlCache.set(key, u);
+        return u;
+    });
+    p.catch(() => __heicUrlCache.delete(key));
+    return p;
+}
+
+// 客户端 heic2any 兜底(便携版无 Python 转换环境时)
+async function heicToJpegViaWasm(dataUrl, quality) {
+    if (typeof heic2any !== 'function') throw new Error('heic2any 未加载');
+    const resp = await fetch(dataUrl);
+    const blob = await resp.blob();
+    const result = await heic2any({ blob, toType: 'image/jpeg', quality: quality || 0.9 });
+    const jpegBlob = Array.isArray(result) ? result[0] : result;
+    return new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = e => res(e.target.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(jpegBlob);
+    });
+}
+
 // 渲染附件
 function renderAttachments(attachments) {
     const container = getElement('attachments-container');
@@ -367,8 +405,7 @@ function renderAttachments(attachments) {
     // 使用文档片段减少DOM重绘
     const fragment = document.createDocumentFragment();
     attachments.forEach(attachment => {
-        const isHeic = /\.(heic|heif)$/i.test(attachment.name || '') ||
-                       /^(image\/heic|image\/heif)/i.test(attachment.type || '');
+        const isHeic = isHeicAttachment(attachment);
         const isImage = !isHeic && attachment.type && attachment.type.startsWith('image/');
         const isPdf = attachment.type === 'application/pdf';
 
@@ -442,31 +479,28 @@ function renderAttachments(attachments) {
             <div class="attachment-name">${attachment.name || ''}</div>
         `;
 
-        // HEIC 缩略图异步转 JPEG
-        if (isHeic && attachment.url && typeof heic2any === 'function') {
+        // HEIC 缩略图: 优先服务端转换, 失败回退客户端 heic2any
+        if (isHeic) {
             const placeholder = item.querySelector('.heic-placeholder');
-            const doConvert = async () => {
-                if (attachment.__heicThumb) {
-                    if (placeholder) placeholder.outerHTML = `<img src="${attachment.__heicThumb}" class="attachment-thumbnail" style="object-fit:cover;" alt="${attachment.name}">`;
-                    return;
+            const assetId = window._currentViewingAssetId;
+            const replacePlaceholder = (src) => {
+                if (placeholder && placeholder.isConnected) {
+                    placeholder.outerHTML = `<img src="${src}" class="attachment-thumbnail" style="object-fit:cover;" alt="${attachment.name}">`;
                 }
+            };
+            const doConvert = async () => {
                 try {
-                    const resp = await fetch(attachment.url);
-                    const blob = await resp.blob();
-                    const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.7 });
-                    const jpegBlob = Array.isArray(result) ? result[0] : result;
-                    const jpegUrl = await new Promise((res, rej) => {
-                        const reader = new FileReader();
-                        reader.onload = e => res(e.target.result);
-                        reader.onerror = rej;
-                        reader.readAsDataURL(jpegBlob);
-                    });
-                    attachment.__heicThumb = jpegUrl;
-                    if (placeholder && placeholder.isConnected) {
-                        placeholder.outerHTML = `<img src="${jpegUrl}" class="attachment-thumbnail" style="object-fit:cover;" alt="${attachment.name}">`;
+                    const u = await fetchHeicPreviewUrl(assetId, attachment.name, true);
+                    replacePlaceholder(u);
+                } catch (serverErr) {
+                    console.warn('服务端 HEIC 缩略图失败, 尝试客户端转换:', attachment.name, serverErr);
+                    try {
+                        if (!attachment.url) throw new Error('无本地数据');
+                        const jpegUrl = await heicToJpegViaWasm(attachment.url, 0.7);
+                        replacePlaceholder(jpegUrl);
+                    } catch (e) {
+                        console.warn('HEIC 缩略图转换失败:', attachment.name, e);
                     }
-                } catch (e) {
-                    console.warn('HEIC 缩略图转换失败:', attachment.name, e);
                 }
             };
             // 延迟转换, 避免阻塞渲染
@@ -531,13 +565,83 @@ async function openFileViewer(attachment) {
     // 设置模态框标题
     modalTitle.textContent = `查看文件: ${attachment.name || '未知文件名'}`;
 
-    // HEIC/HEIF 浏览器无法直接预览: 先标记, 待 url 就绪后用 heic2any 转 JPEG
-    const isHeic = /\.(heic|heif)$/i.test(attachment.name || '') ||
-                   /^(image\/heic|image\/heif)/i.test(attachment.type || '');
+    const isHeic = isHeicAttachment(attachment);
     const dlBtn = document.getElementById('modal-download-btn');
     if (dlBtn) {
         dlBtn.style.display = 'none';
         dlBtn.onclick = null;
+    }
+
+    // 清理上一次残留的提示元素(防止重复打开累积多条文字)
+    modal.querySelectorAll('.image-placeholder').forEach(el => el.remove());
+
+    // HEIC/HEIF: 服务端转 JPEG(libheif 新版, 兼容 iPhone HDR) → 客户端 heic2any 兜底 → 下载
+    if (isHeic) {
+        imageElement.removeAttribute('src');
+        imageElement.style.display = 'none';
+        pdfElement.style.display = 'none';
+        modal.classList.add('active');
+        const mdBody = modal.querySelector('.modal-body') || modal;
+        const loading = document.createElement('div');
+        loading.className = 'image-placeholder';
+        loading.textContent = 'HEIC 图片加载中…';
+        mdBody.appendChild(loading);
+
+        const showImage = (src) => {
+            loading.remove();
+            imageElement.src = src;
+            imageElement.style.display = 'block';
+            setupImageZoomControls();
+        };
+        const showDownload = (msg) => {
+            loading.textContent = msg || 'HEIC 转换失败,请下载原图查看';
+            if (dlBtn && attachment.url) {
+                dlBtn.style.display = '';
+                dlBtn.onclick = () => {
+                    const a = document.createElement('a');
+                    a.href = attachment.url;
+                    a.download = attachment.name || 'download.heic';
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => a.remove(), 0);
+                };
+            }
+        };
+
+        try {
+            const u = await fetchHeicPreviewUrl(window._currentViewingAssetId, attachment.name, false);
+            showImage(u);
+            return;
+        } catch (serverErr) {
+            console.warn('服务端 HEIC 转换失败, 尝试客户端转换:', serverErr);
+        }
+
+        // 客户端兜底需要完整 dataURL, 瘦身后从 IndexedDB 恢复
+        if (!attachment.url) {
+            const assetId = window._currentViewingAssetId;
+            if (assetId && storageManager) {
+                try {
+                    const fullData = await storageManager.getItem(STORAGE_KEYS.ASSET_MANAGEMENT_DATA);
+                    if (fullData) {
+                        const assets = Array.isArray(fullData) ? fullData : (fullData.data || []);
+                        const fullAtt = (assets.find(a => a.id === assetId) || {}).attachments
+                            ?.find(a => a.name === attachment.name);
+                        if (fullAtt && fullAtt.url) attachment.url = fullAtt.url;
+                    }
+                } catch (e) { console.warn('从 IndexedDB 加载附件 url 失败:', e); }
+            }
+        }
+
+        try {
+            if (!attachment.url) throw new Error('附件数据不可用');
+            loading.textContent = 'HEIC 图片转换中…';
+            const jpegUrl = await heicToJpegViaWasm(attachment.url, 0.92);
+            showImage(jpegUrl);
+        } catch (e) {
+            console.warn('HEIC 客户端转换失败:', e);
+            showDownload();
+        }
+        return;
     }
 
     // 如果 attachment.url 不存在（localStorage 瘦身后），从 IndexedDB 加载完整数据
@@ -564,54 +668,6 @@ async function openFileViewer(attachment) {
             console.warn('附件 url 不可用:', attachment.name);
             return;
         }
-    }
-
-    if (isHeic) {
-        imageElement.style.display = 'none';
-        pdfElement.style.display = 'none';
-        modal.classList.add('active');
-        const mdBody = modal.querySelector('.modal-body') || modal;
-        const loading = document.createElement('div');
-        loading.className = 'image-placeholder';
-        loading.textContent = 'HEIC 图片转换中…';
-        mdBody.appendChild(loading);
-
-        const showDownload = (msg) => {
-            loading.textContent = msg || 'HEIC 转换失败,请下载原图查看';
-            if (dlBtn && attachment.url) {
-                dlBtn.style.display = '';
-                dlBtn.onclick = () => {
-                    const a = document.createElement('a');
-                    a.href = attachment.url;
-                    a.download = attachment.name || 'download.heic';
-                    document.body.appendChild(a);
-                    a.click();
-                    setTimeout(() => a.remove(), 0);
-                };
-            }
-        };
-
-        try {
-            if (typeof heic2any !== 'function') throw new Error('heic2any 未加载');
-            const resp = await fetch(attachment.url);
-            const blob = await resp.blob();
-            const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.92 });
-            const jpegBlob = Array.isArray(result) ? result[0] : result;
-            const jpegUrl = await new Promise((res, rej) => {
-                const reader = new FileReader();
-                reader.onload = e => res(e.target.result);
-                reader.onerror = rej;
-                reader.readAsDataURL(jpegBlob);
-            });
-            loading.remove();
-            imageElement.src = jpegUrl;
-            imageElement.style.display = 'block';
-            setupImageZoomControls();
-        } catch (e) {
-            console.warn('HEIC 转换失败:', e);
-            showDownload();
-        }
-        return;
     }
 
     if (attachment.type && attachment.type.startsWith('image/')) {

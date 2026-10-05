@@ -20,6 +20,7 @@ const statsRouter = require('./routes/stats').router;
 const compatRouter = require('./routes/compat').router;
 const feishuRouter = require('./routes/feishu').router;
 const dataRouter = require('./routes/data').router;
+const attachmentsRouter = require('./routes/attachments').router;
 const { isFirstInit } = require('./db');
 
 // 全新库时自动导入旧版便携版 JSON/JS 数据(失败不阻塞启动)
@@ -176,6 +177,7 @@ app.use(statsRouter.routes()).use(statsRouter.allowedMethods());
 app.use(compatRouter.routes()).use(compatRouter.allowedMethods());
 app.use(feishuRouter.routes()).use(feishuRouter.allowedMethods());
 app.use(dataRouter.routes()).use(dataRouter.allowedMethods());
+app.use(attachmentsRouter.routes()).use(attachmentsRouter.allowedMethods());
 
 // 兜底 404(JSON 格式)
 app.use(async (ctx) => {

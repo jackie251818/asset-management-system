@@ -174,6 +174,24 @@ const ApiClient = {
         return payload;
     },
 
+    /** 带鉴权头的二进制请求(附件预览等 <img>/<iframe> 无法自定义头的场景): 返回 Blob */
+    async fetchBlob(url) {
+        const headers = {};
+        if (this.embeddedMode) {
+            const et = this._embeddedToken();
+            if (et) headers['X-Server-Token'] = et;
+        } else if (this.token) {
+            headers['Authorization'] = 'Bearer ' + this.token;
+        }
+        const resp = await fetch(this._baseUrl() + url, { headers });
+        if (!resp.ok) {
+            const err = new Error('请求失败: HTTP ' + resp.status);
+            err.code = resp.status;
+            throw err;
+        }
+        return resp.blob();
+    },
+
     /** 401 处理: 清凭证 → 跳转登录页
      *  注意: 不用 alert()! Electron 同步对话框关闭后立即导航会导致登录页键盘输入失效 */
     _handleUnauthorized() {

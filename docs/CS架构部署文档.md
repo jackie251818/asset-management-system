@@ -904,6 +904,15 @@ sudo dnf module install -y nodejs:22            # 系统模块源
 > - 内网离线环境无法执行上述步骤时，请改用**方式 A**（产物已内置运行时，免 Node）。
 > - 若 `npm install` 阶段 better-sqlite3 触发源码编译（一般有预编译二进制，不会），需先装工具链：Ubuntu `sudo apt install -y build-essential python3`；RHEL `sudo dnf groupinstall -y "Development Tools" && sudo dnf install -y python3`。
 
+> **HEIC/HEIF 附件在线预览（可选，2026-10-05 起）**：iPhone 拍摄的 HEIC 照片浏览器无法直接解码，服务端经 `GET /api/attachments/preview` 调用 Python 运行时转 JPEG（磁盘缓存于 `data/att-cache/`，转换脚本在 `server/tools/heic_convert.py`）。Linux 部署需**系统级**安装（systemd 服务用户也要能 import，务必用 sudo）：
+>
+> ```bash
+> sudo apt install -y python3-pip
+> sudo pip3 install pillow-heif Pillow    # wheel 自带 libheif 1.2x + libde265, 无需 apt 装 libheif
+> ```
+>
+> 注意：Ubuntu 22.04 apt 源自带的 libheif 1.12 无法解码带 HDR gain map 的 iPhone HEIC（报 "Too many auxiliary image references"），必须用 pillow-heif 自带的新版本。未安装时接口返回 501，前端自动回退客户端 heic2any 转换（老版 WASM 对部分 iPhone HEIC 不支持）→ 再失败则提供下载按钮。
+
 ### 11.3 方式 A：打包产物部署（免 Node.js）
 
 ```bash
