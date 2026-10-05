@@ -367,7 +367,9 @@ function renderAttachments(attachments) {
     // 使用文档片段减少DOM重绘
     const fragment = document.createDocumentFragment();
     attachments.forEach(attachment => {
-        const isImage = attachment.type && attachment.type.startsWith('image/');
+        const isHeic = /\.(heic|heif)$/i.test(attachment.name || '') ||
+                       /^(image\/heic|image\/heif)/i.test(attachment.type || '');
+        const isImage = !isHeic && attachment.type && attachment.type.startsWith('image/');
         const isPdf = attachment.type === 'application/pdf';
 
         const item = document.createElement('div');
@@ -386,7 +388,13 @@ function renderAttachments(attachments) {
         }
 
         let thumbnailHtml = '';
-        if (isImage) {
+        if (isHeic) {
+            thumbnailHtml = `
+                <div class="attachment-thumbnail" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;background:var(--bg-tertiary,#f5f5f5);border:1px dashed var(--gray-border,#d1d5db);">
+                    <svg class="svg-icon" style="width:40px;height:40px;color:var(--brand,#3081eb);"><use xlink:href="#icon-file"></use></svg>
+                    <span style="font-size:11px;color:var(--gray-dark,#6b7280);font-weight:500;">HEIC</span>
+                </div>`;
+        } else if (isImage) {
             const src = attachment.thumbnail || attachment.url || '';
             const a = lazyImgAttrs(src);
             thumbnailHtml = `<img src="${a.src}" data-src="${a.dataSrc}" class="attachment-thumbnail att-lazy" alt="${attachment.name}" loading="lazy" decoding="async">`;
@@ -433,7 +441,19 @@ function renderAttachments(attachments) {
             <div class="attachment-name">${attachment.name || ''}</div>
         `;
 
-        item.addEventListener('click', () => openFileViewer(attachment));
+        item.addEventListener('click', () => {
+            if (isHeic) {
+                // HEIC 浏览器不支持预览, 直接触发下载
+                const a = document.createElement('a');
+                a.href = attachment.url || '';
+                a.download = attachment.name || 'download.heic';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => a.remove(), 0);
+                return;
+            }
+            openFileViewer(attachment);
+        });
         fragment.appendChild(item);
     });
 
@@ -466,6 +486,19 @@ function renderAttachments(attachments) {
 
 // 打开文件查看器
 async function openFileViewer(attachment) {
+    // HEIC/HEIF 浏览器无法解码, 直接下载
+    const isHeic = /\.(heic|heif)$/i.test(attachment.name || '') ||
+                   /^(image\/heic|image\/heif)/i.test(attachment.type || '');
+    if (isHeic) {
+        const a = document.createElement('a');
+        a.href = attachment.url || '';
+        a.download = attachment.name || 'download.heic';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 0);
+        return;
+    }
+
     // 使用全局modal变量，避免重复声明
     const modal = getElement('image-viewer-modal');
     const imageElement = getElement('modal-image');
