@@ -323,9 +323,38 @@ function dataUrlToBuffer(dataUrl) {
     return { buffer: Buffer.from(m[3], 'base64'), mime: m[1] || 'application/octet-stream' };
 }
 
+// 表字段类型缓存: tableId -> Map(fieldName -> 飞书type码)
+const _fieldTypeCache = new Map();
+async function getTableFieldTypes(cfg, tableId) {
+    if (_fieldTypeCache.has(tableId)) return _fieldTypeCache.get(tableId);
+    const data = await feishuRequest('GET',
+        `/open-apis/bitable/v1/apps/${cfg.appToken}/tables/${tableId}/fields?page_size=100`, undefined, cfg);
+    const map = new Map((data.items || []).map(f => [f.field_name, f.type]));
+    _fieldTypeCache.set(tableId, map);
+    return map;
+}
+
 // 组装含附件的飞书字段: 本地有附件才上传并覆盖飞书侧; 本地无附件则不动飞书附件字段
-async function buildFieldsWithAttachments(cfg, doc, mappings) {
+// 标量值按目标表实际字段类型适配(数字字段只收 JSON number, 无法转换的字段跳过避免整批报错)
+async function buildFieldsWithAttachments(cfg, doc, mappings, tableId) {
     const fields = docToFields(doc, mappings);
+    if (tableId) {
+        const fieldTypes = await getTableFieldTypes(cfg, tableId);
+        for (const [name, val] of Object.entries(fields)) {
+            const ft = fieldTypes.get(name);
+            if (ft === 2) { // Number
+                const n = Number(val);
+                if (isNaN(n)) { delete fields[name]; continue; }
+                fields[name] = n;
+            } else if (ft === 3) { // SingleSelect 需要字符串
+                fields[name] = String(val);
+            } else if (ft === 5 && typeof val !== 'number') { // DateTime 需要毫秒时间戳
+                const t = new Date(val).getTime();
+                if (isNaN(t)) { delete fields[name]; continue; }
+                fields[name] = t;
+            }
+        }
+    }
     for (const m of mappings) {
         if (m.type !== 'attachment') continue;
         const atts = Array.isArray(doc[m.localField]) ? doc[m.localField] : [];
@@ -411,7 +440,7 @@ async function pushToFeishu(options = {}) {
             const validDocs = [];
             for (const doc of tableDocs) {
                 try {
-                    createRecords.push({ fields: await buildFieldsWithAttachments(cfg, doc, mappings) });
+                    createRecords.push({ fields: await buildFieldsWithAttachments(cfg, doc, mappings, tableId) });
                     validDocs.push(doc);
                 } catch (e) {
                     failed.push({ id: doc.id, error: e.message });
@@ -443,7 +472,7 @@ async function pushToFeishu(options = {}) {
                 try {
                     updateRecords.push({
                         record_id: item.record_id,
-                        fields: await buildFieldsWithAttachments(cfg, item.doc, mappings)
+                        fields: await buildFieldsWithAttachments(cfg, item.doc, mappings, tableId)
                     });
                     validItems.push(item);
                 } catch (e) {
