@@ -74,7 +74,8 @@ function renderAllAssets(filteredAssets = null) {
 // 基于字符串构建行 HTML（避免为每行创建 DOM 节点、避免创建独立对象）
 function buildAssetTableRowHtml(asset, showDamageReason) {
     const assetId = asset ? asset.id : '';
-    const statusBadge = __ASSET_STATUS_BADGE_CACHE[asset && asset.status] || '';
+    const statusKey = (asset && asset.status) || 'idle';
+    const statusBadge = __ASSET_STATUS_BADGE_CACHE[statusKey] || '';
     const damageReasonCell = showDamageReason
         ? '<td>' + __escapeHtml((asset && asset.damageReason) || '-') + '</td>'
         : '';
@@ -301,9 +302,10 @@ function viewAssetDetails(assetId) {
             // 更新状态徽章
             const statusBadge = getElement('asset-status-badge');
             if (statusBadge) {
+                const statusKey = asset.status || 'idle';
                 statusBadge.className = 'status-badge';
-                statusBadge.classList.add(`status-${asset.status}`);
-                statusBadge.innerHTML = `<i class="fas ${getStatusIcon(asset.status)}"></i> ${getStatusText(asset.status)}`;
+                statusBadge.classList.add(`status-${statusKey}`);
+                statusBadge.innerHTML = `<i class="fas ${getStatusIcon(statusKey)}"></i> ${getStatusText(statusKey)}`;
             }
             
             // 处理损坏原因显示
@@ -696,7 +698,7 @@ function getStatusText(status) {
         'maintenance': '维修中',
         'retired': '报废'
     };
-    return statusMap[status] || status;
+    return statusMap[status] || '闲置';
 }
 
 // 获取状态图标
@@ -708,7 +710,7 @@ function getStatusIcon(status) {
         'maintenance': 'fa-wrench',
         'retired': 'fa-ban'
     };
-    return iconMap[status] || 'fa-question-circle';
+    return iconMap[status] || 'fa-pause-circle';
 }
 
 // 渲染维护记录 - 使用防抖和requestAnimationFrame优化

@@ -19,6 +19,14 @@ function groupCount(col) {
     return out;
 }
 
+/** 状态分组：空状态(NULL/'')归入 idle（闲置），与前端/导入逻辑约定一致 */
+function groupCountByStatus() {
+    const rows = db.prepare(`SELECT COALESCE(NULLIF(status, ''), 'idle') AS k, COUNT(*) AS n FROM assets GROUP BY k ORDER BY n DESC`).all();
+    const out = {};
+    for (const r of rows) out[r.k] = r.n;
+    return out;
+}
+
 /** GET /api/stats/summary */
 router.get('/summary', async (ctx) => {
     const totals = db.prepare(`SELECT COUNT(*) AS total,
@@ -41,7 +49,7 @@ router.get('/summary', async (ctx) => {
         total: totals.total,
         totalValue: totals.totalValue,
         totalQuantity: totals.totalQuantity,
-        byStatus: groupCount('status'),
+        byStatus: groupCountByStatus(),
         byType: groupCount('type'),
         byDepartment: groupCount('department'),
         byOwner: groupCount('owner'),

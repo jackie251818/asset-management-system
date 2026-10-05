@@ -27,15 +27,17 @@ function updateStatistics() {
             // 检查asset对象是否有效
             if (!asset || typeof asset !== 'object') continue;
             
-            if (asset.status === 'active') {
+            // 空状态(null/undefined/'')默认归入闲置，与导入逻辑保持一致
+            const status = asset.status || 'idle';
+            if (status === 'active') {
                 active++;
-            } else if (asset.status === 'idle') {
+            } else if (status === 'idle') {
                 idle++;
-            } else if (asset.status === 'damaged') {
+            } else if (status === 'damaged') {
                 damaged++;
-            } else if (asset.status === 'maintenance') {
+            } else if (status === 'maintenance') {
                 maintenance++;
-            } else if (asset.status === 'retired') {
+            } else if (status === 'retired') {
                 retired++;
             }
         }

@@ -133,8 +133,10 @@ function renderAssetStatusChart() {
         Object.assign(statusStats, csStats.byStatus);
     } else {
         assetsData.forEach(asset => {
-            if (asset.status && statusStats.hasOwnProperty(asset.status)) {
-                statusStats[asset.status]++;
+            // 空状态(null/undefined/'')默认归入闲置，与导入逻辑保持一致
+            const status = asset.status || 'idle';
+            if (statusStats.hasOwnProperty(status)) {
+                statusStats[status]++;
             }
         });
     }
