@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -2025,6 +2025,9 @@
                 <button id="zoom-in-btn" class="btn btn-secondary zoom-btn" data-action="zoom-in">
                     <i class="fas fa-search-plus"></i> 放大
                 </button>
+                <button id="modal-download-btn" class="btn btn-primary zoom-btn" style="display:none;margin-left:8px;">
+                    <i class="fas fa-download"></i> 下载
+                </button>
             </div>
             <div class="modal-body">
                 <img id="modal-image" class="modal-image" style="max-width: 100%; max-height: 80vh; transition: transform 0.3s ease; cursor: grab;">
@@ -2040,6 +2043,8 @@
 
     <!-- 引入SheetJS库用于Excel处理 - 本地版本 -->
     <script src="libs/xlsx.full.min.js" defer onerror="alert('XLSX库加载失败，请确保已正确下载并放置到libs目录');"></script>
+    <!-- heic2any: HEIC/HEIF 转 JPEG 在线预览(仅附件含 HEIC 时用到) -->
+    <script src="libs/heic2any.min.js" defer></script>
     <!-- 功能模块按依赖顺序加载，defer保证按序执行 -->
     <script src="js/theme.js" defer></script>
     <script src="js/api.js?v=3.5.0" defer></script>
@@ -2048,7 +2053,7 @@
     <script src="js/notifications.js" defer></script>
     <script src="js/navigation.js" defer></script>
     <script src="js/dashboard.js" defer></script>
-    <script src="js/assets.js" defer></script>
+    <script src="js/assets.js?v=3.8.0" defer></script>
     <script src="js/asset-add.js" defer></script>
     <script src="js/search-filter.js" defer></script>
     <script src="js/import-export.js" defer></script>
