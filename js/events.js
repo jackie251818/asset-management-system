@@ -1220,6 +1220,9 @@ function bindCoreEventListeners() {
                     }
                 }
 
+                // 清除筛选残留，刷新后统计/图表必须基于全部资产
+                window.filteredAssetsForStatistics = null;
+
                 // 重新计算并更新统计数据（所有页面的统计卡片）
                 updateStatistics();
 
