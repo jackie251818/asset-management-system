@@ -95,12 +95,18 @@ function switchPage(pageName) {
             renderAllReportsCharts();
         },
         'dashboard': function() {
+            // 清除筛选残留，控制面板统计应始终基于全部资产
+            window.filteredAssetsForStatistics = null;
             updateStatistics();
             renderRecentAssets();
             renderDamagedAssets();
         },
         'assets': function() {
+            // 清除筛选残留：renderAllAssets() 显示全部资产，统计也必须基于全部资产，
+            // 否则出现"列表是全部、统计是旧筛选结果"的不一致
+            window.filteredAssetsForStatistics = null;
             renderAllAssets();
+            if (typeof updateStatistics === 'function') updateStatistics();
         },
         'add-asset': function() {
             const addAssetForm = getElement('add-asset-form');
