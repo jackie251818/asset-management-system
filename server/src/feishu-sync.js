@@ -265,10 +265,10 @@ function recordToDoc(record, mappings, idField) {
 function normalizeFeishuValue(v, type) {
     if (v === undefined || v === null) return null;
     if (type === 'attachment') return Array.isArray(v) ? v : [];
-    if ((type === 'text' || type === 'multi_select') && Array.isArray(v)) {
+    if ((type === 'text' || type === 'multi_select' || type === 'person') && Array.isArray(v)) {
         // 文本字段: [{text: "..."}] → 直接拼接
-        // 人员字段: [{name: "张三", id: "ou_xxx"}] → 逗号分隔
-        // 多选字段: ["选项1", "选项2"] → 逗号分隔
+        // 人员字段(person): [{name: "张三", id: "ou_xxx"}] → 逗号分隔
+        // 多选字段(multi_select): ["选项1", "选项2"] → 逗号分隔
         if (v.length && typeof v[0] === 'object' && v[0].text !== undefined) {
             return v.map(seg => (seg && seg.text) || '').join('');
         }
@@ -277,6 +277,10 @@ function normalizeFeishuValue(v, type) {
             if (typeof seg === 'string') return seg;
             return seg.name || '';
         }).filter(Boolean).join(', ');
+    }
+    if (type === 'person' && v && typeof v === 'object') {
+        // 单人员不是数组
+        return v.name || null;
     }
     if (type === 'date' && typeof v === 'number') {
         // 飞书日期字段返回毫秒时间戳, 转 YYYY-MM-DD
