@@ -86,8 +86,11 @@ function rowToDoc(row, records, atts) {
     return doc;
 }
 
-/** 批量装配: 一次查询取出全部维保/附件, 按资产分组(避免 N+1) */
-function rowsToDocs(rows) {
+/** 批量装配: 一次查询取出全部维保/附件, 按资产分组(避免 N+1)
+ *  @param {Array} rows 资产主表行
+ *  @param {boolean} [opts.skipAttachmentDataUrl] 为 true 时跳过附件 data_url (列表接口用, 省内存)
+ */
+function rowsToDocs(rows, opts = {}) {
     if (!rows.length) return [];
     const { db } = require('./db');
     const ids = rows.map(r => r.id);
@@ -95,8 +98,12 @@ function rowsToDocs(rows) {
     const allRecords = db.prepare(
         `SELECT * FROM maintenance_records WHERE asset_id IN (${marks}) ORDER BY asset_id, sort_order, id`
     ).all(...ids);
+    // 列表接口跳过 data_url (base64), 详情接口才需要全量加载
+    const attCols = opts.skipAttachmentDataUrl
+        ? 'id, asset_id, name, mime_type, size, thumbnail, sort_order'
+        : '*';
     const allAtts = db.prepare(
-        `SELECT * FROM attachments WHERE asset_id IN (${marks}) ORDER BY asset_id, sort_order, id`
+        `SELECT ${attCols} FROM attachments WHERE asset_id IN (${marks}) ORDER BY asset_id, sort_order, id`
     ).all(...ids);
 
     const recMap = new Map();

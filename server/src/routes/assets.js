@@ -64,14 +64,14 @@ router.get('/', async (ctx) => {
         `SELECT a.* FROM assets a${where} ORDER BY ${sortCol} ${order} LIMIT ? OFFSET ?`
     ).all(...params, size, (page - 1) * size);
 
-    ok(ctx, { items: rowsToDocs(rows), total, page, size, pages: Math.ceil(total / size) });
+    ok(ctx, { items: rowsToDocs(rows, { skipAttachmentDataUrl: true }), total, page, size, pages: Math.ceil(total / size) });
 });
 
-/** GET /api/assets/all 全量 */
+/** GET /api/assets/all 全量(打印/导出 Excel 用) — 跳过附件 data_url 省内存 */
 router.get('/all', async (ctx) => {
     const { where, params } = buildFilters(ctx.query);
     const rows = db.prepare(`SELECT a.* FROM assets a${where} ORDER BY a.id ASC`).all(...params);
-    ok(ctx, rowsToDocs(rows));
+    ok(ctx, rowsToDocs(rows, { skipAttachmentDataUrl: true }));
 });
 
 /** GET /api/assets/check-ids?ids=a,b,c → 已存在的编号列表 */
