@@ -644,7 +644,9 @@ async function openFileViewer(attachment) {
         return;
     }
 
-    // 如果 attachment.url 不存在（localStorage 瘦身后），从 IndexedDB 加载完整数据
+    // 如果 attachment.url 不存在（列表接口瘦身跳过了 data_url），按顺序尝试恢复:
+    //   1. IndexedDB localStorage 备份
+    //   2. 调详情 API /api/assets/:id 拉完整附件数据(含 data_url)
     if (!attachment.url) {
         const assetId = window._currentViewingAssetId;
         if (assetId && storageManager) {
@@ -662,6 +664,20 @@ async function openFileViewer(attachment) {
                 }
             } catch(e) {
                 console.warn('从 IndexedDB 加载附件 url 失败:', e);
+            }
+        }
+        // IndexedDB 也没有 → 调详情 API 拉完整数据
+        if (!attachment.url && assetId && typeof ApiClient !== 'undefined') {
+            try {
+                const detail = await ApiClient.request('GET', '/api/assets/' + encodeURIComponent(assetId));
+                if (detail && detail.attachments) {
+                    const fullAtt = detail.attachments.find(a => a.name === attachment.name);
+                    if (fullAtt && fullAtt.url) {
+                        attachment.url = fullAtt.url;
+                    }
+                }
+            } catch(e) {
+                console.warn('从详情 API 加载附件 url 失败:', e);
             }
         }
         if (!attachment.url) {
