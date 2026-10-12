@@ -30,7 +30,18 @@
     }
     async function loadSessionDetail(id) {
         const data = await storageManager.getItem(STORAGE_KEY_PREFIX + id);
-        return data || null;
+        if (!data) return null;
+        // 兼容扁平化存储格式: 部分旧数据 session 字段在顶层而非 detail.session 内
+        if (!data.session) {
+            data.session = {
+                id: data.id, name: data.name, creator: data.creator,
+                creatorRole: data.creatorRole, createdAt: data.createdAt,
+                updatedAt: data.updatedAt, status: data.status, scope: data.scope,
+                totalAssets: data.totalAssets, countedAssets: data.countedAssets,
+                exceptionCount: data.exceptionCount, version: data.version,
+            };
+        }
+        return data;
     }
     /**
      * 保存批次明细(乐观锁: 与服务端最新版本对比，冲突抛 40901)
