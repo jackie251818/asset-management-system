@@ -188,6 +188,18 @@ class FeishuBitableClient {
     }
 }
 
+// ============ 使用状态: 中文标签 ↔ 英文代码映射 ============
+const STATUS_CN_TO_EN = {
+    '在用': 'active', '使用中': 'active', '使用': 'active', '正常': 'active', '启用': 'active',
+    '闲置': 'idle', '空闲': 'idle', '停用': 'idle', '未使用': 'idle',
+    '维修中': 'maintenance', '维修': 'maintenance', '维护中': 'maintenance', '修理中': 'maintenance',
+    '损坏': 'damaged', '故障': 'damaged', '坏': 'damaged',
+    '报废': 'retired', '已报废': 'retired', '废弃': 'retired'
+};
+const STATUS_EN_TO_CN = {
+    'active': '在用', 'idle': '闲置', 'damaged': '损坏', 'maintenance': '维修中', 'retired': '报废'
+};
+
 // ============ 字段映射 ============
 function docToFields(doc, mappings) {
     const fields = {};
@@ -201,7 +213,11 @@ function docToFields(doc, mappings) {
             case 'date':
                 fields[m.feishuField] = parseDateToMs(val); break;
             case 'single_select':
-                fields[m.feishuField] = String(val); break;
+                // 本地用英文代码, 飞书用中文标签 (使用状态字段需双向映射)
+                fields[m.feishuField] = (m.localField === 'status' && STATUS_EN_TO_CN[val]) || String(val); break;
+            case 'multi_select':
+                // 多选: 本地逗号分隔字符串 → 飞书数组
+                fields[m.feishuField] = String(val).split(',').map(s => s.trim()).filter(Boolean); break;
             default:
                 fields[m.feishuField] = String(val);
         }
@@ -217,6 +233,10 @@ function recordToDoc(record, mappings, idField) {
         doc[m.localField] = normalizeFeishuValue(v, m.type);
     }
     doc.id = normalizeFeishuValue(f[idField], 'text');
+    // 使用状态: 飞书返回中文标签, 本地系统用英文代码
+    if (doc.status) {
+        doc.status = STATUS_CN_TO_EN[String(doc.status).trim()] || doc.status;
+    }
     // 为飞书表中不存在但本地必填的字段填默认值
     // 允许"字段不匹配的忽略"场景下 pull 回来也能过校验
     if (!doc.owner) doc.owner = '未知';
@@ -243,9 +263,18 @@ function recordToDoc(record, mappings, idField) {
 function normalizeFeishuValue(v, type) {
     if (v === undefined || v === null) return null;
     if (type === 'attachment') return Array.isArray(v) ? v : [];
-    if (type === 'text' && Array.isArray(v)) {
-        // 飞书文本字段返回 [{text: "..."}] 数组
-        return v.map(seg => (seg && seg.text) || '').join('');
+    if ((type === 'text' || type === 'multi_select') && Array.isArray(v)) {
+        // 文本字段: [{text: "..."}] → 直接拼接
+        // 人员字段: [{name: "张三", id: "ou_xxx"}] → 逗号分隔
+        // 多选字段: ["选项1", "选项2"] → 逗号分隔
+        if (v.length && typeof v[0] === 'object' && v[0].text !== undefined) {
+            return v.map(seg => (seg && seg.text) || '').join('');
+        }
+        return v.map(seg => {
+            if (!seg) return '';
+            if (typeof seg === 'string') return seg;
+            return seg.name || '';
+        }).filter(Boolean).join(', ');
     }
     if (type === 'date' && typeof v === 'number') {
         // 飞书日期字段返回毫秒时间戳, 转 YYYY-MM-DD

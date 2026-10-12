@@ -58,9 +58,6 @@
                         }
                     }
                 }
-                if (cfg.fieldNameForAssetId) {
-                    document.getElementById('fs-id-field').value = cfg.fieldNameForAssetId;
-                }
                 if (cfg.syncOptions) {
                     document.getElementById('fs-opt-push').checked = cfg.syncOptions.pushEnabled !== false;
                     document.getElementById('fs-opt-pull').checked = cfg.syncOptions.pullEnabled !== false;
@@ -81,7 +78,7 @@
                 appSecret: document.getElementById('fs-app-secret').value.trim(),
                 appToken: document.getElementById('fs-app-token').value.trim(),
                 tableId: document.getElementById('fs-table-id').value.trim(),
-                fieldNameForAssetId: document.getElementById('fs-id-field').value || '资产编号',
+                fieldNameForAssetId: (validMappings.find(m => m.localField === 'id') || {}).feishuField || '资产编号',
                 fieldMappings: validMappings,
                 syncOptions: {
                     pushEnabled: document.getElementById('fs-opt-push').checked,
@@ -214,7 +211,6 @@
                     this.ensureDefaultMappings();
                 }
                 this.renderMappingTable();
-                this.updateIdFieldSelect();
                 const mapped = this._mappings.filter(m => m.feishuField).length;
                 showNotification(`已加载 ${this._feishuFields.length} 个飞书字段, 自动匹配 ${mapped}/${this._mappings.length} 个本地字段`, 'success');
             } catch (e) {
@@ -424,7 +420,11 @@
                             ${this._feishuFields.map(f => `<option value="${f.field_name}" ${f.field_name === m.feishuField ? 'selected' : ''}>${f.field_name}</option>`).join('')}
                         </select>
                     </td>
-                    <td style="padding:6px 10px;border-bottom:1px solid var(--gray-border);">${this.TYPE_LABELS[m.type] || m.type}</td>
+                    <td style="padding:6px 10px;border-bottom:1px solid var(--gray-border);">
+                        <select data-local="${m.localField}" class="fs-field-type" style="width:100%;">
+                            ${Object.entries(this.TYPE_LABELS).map(([val, label]) => `<option value="${val}" ${val === m.type ? 'selected' : ''}>${label}</option>`).join('')}
+                        </select>
+                    </td>
                 `;
                 tbody.appendChild(tr);
             }
@@ -444,19 +444,13 @@
                     if (map) map.feishuField = e.target.value;
                 });
             });
-        },
-
-        updateIdFieldSelect() {
-            const sel = document.getElementById('fs-id-field');
-            const current = sel.value;
-            sel.innerHTML = this._feishuFields.map(f =>
-                `<option value="${f.field_name}">${f.field_name}</option>`
-            ).join('');
-            // 默认选中「资产编号」字段, 其次保留已保存值
-            const prefer = current || '资产编号';
-            const match = this._feishuFields.find(f => f.field_name === prefer)
-                       || this._feishuFields.find(f => f.field_name.includes('编号'));
-            if (match) sel.value = match.field_name;
+            tbody.querySelectorAll('.fs-field-type').forEach(sel => {
+                sel.addEventListener('change', (e) => {
+                    const local = e.target.dataset.local;
+                    const map = this._mappings.find(m => m.localField === local);
+                    if (map) map.type = e.target.value;
+                });
+            });
         },
 
         bindEvents() {
