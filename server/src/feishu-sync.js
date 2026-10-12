@@ -244,6 +244,8 @@ function recordToDoc(record, mappings, idField) {
     if (!doc.brandModel) doc.brandModel = '';
     if (!doc.department) doc.department = '未分配';
     if (!doc.purchaseDate) doc.purchaseDate = new Date().toISOString().split('T')[0];
+    // 使用状态: 飞书表可能无此字段, 默认在用
+    if (!doc.status) doc.status = 'active';
     // 附件字段: 规范化为元信息数组(保留 _file_token 供后续下载), 二进制在事务外下载后填 url
     for (const m of mappings) {
         if (m.type !== 'attachment') continue;
