@@ -13,6 +13,10 @@ const { validateAssetDoc, rowsToDocs, ASSET_FIELDS } = require('./asset-mapper')
 const { writeAssetTx } = require('./routes/assets');
 const { ERR } = require('./errors');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
 
 const FEISHU_BASE = 'https://open.feishu.cn';
 const KV_CONFIG_KEY = 'feishu_sync_config';
@@ -322,6 +326,52 @@ async function downloadFeishuMedia(cfg, fileToken, retry = 0) {
     }
     const mime = (resp.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim();
     return { buffer: Buffer.from(await resp.arrayBuffer()), mime };
+}
+
+// ============ 缩略图生成: 用 Python PIL, 最长边 480, q70, JPEG ============
+let _pythonResolvePromise = null;  // 用 Promise 缓存避免并发竞态
+async function resolvePython() {
+    if (_pythonResolvePromise) return _pythonResolvePromise;
+    _pythonResolvePromise = (async () => {
+        const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+        const { execFile } = require('child_process');
+        const { promisify } = require('util');
+        const exec = promisify(execFile);
+        for (const c of candidates) {
+            try { await exec(c, ['-c', 'from PIL import Image; print("ok")']); return c; } catch (_) { /* 试下一个 */ }
+        }
+        return null;
+    })();
+    return _pythonResolvePromise;
+}
+
+/** 用 Python PIL 将图片 buffer 转为 base64 JPEG 缩略图(最长边 480, q70) */
+async function makeThumbnail(buffer) {
+    const py = await resolvePython();
+    if (!py) return null;
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'thumb-'));
+    const input = path.join(tmpDir, 'in.bin');
+    const output = path.join(tmpDir, 'out.jpg');
+    try {
+        fs.writeFileSync(input, buffer);
+        const script = path.join(__dirname, '..', 'tools', 'heic_convert.py');
+        const args = process.platform === 'win32' && py === 'py'
+            ? ['-3', script, input, output, '70', '480']
+            : [script, input, output, '70', '480'];
+        await new Promise((resolve, reject) => {
+            const child = spawn(py, args, { windowsHide: true });
+            let err = '';
+            child.stderr.on('data', d => err += d);
+            child.on('error', reject);
+            child.on('close', code => code === 0 ? resolve() : reject(new Error((err || 'exit ' + code).slice(-300))));
+        });
+        const outBuf = fs.readFileSync(output);
+        return 'data:image/jpeg;base64,' + outBuf.toString('base64');
+    } catch (_) {
+        return null;  // 缩略图生成失败不阻断同步
+    } finally {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* 忽略 */ }
+    }
 }
 
 // ============ 附件: 上传(本地 → 飞书), 单文件 ≤20MB ============
@@ -652,12 +702,15 @@ async function pullFromFeishu(options = {}) {
                     try {
                         const { buffer, mime } = await downloadFeishuMedia(cfg, ref._file_token);
                         const attMime = ref.type || mime;
+                        // 生成缩略图(最长边 480, q70, JPEG); 失败则为 null, 不阻断同步
+                        let thumb = null;
+                        try { thumb = await makeThumbnail(buffer); } catch (_) { /* 忽略 */ }
                         downloaded.push({
                             name: ref.name,
                             type: attMime,
                             size: buffer.length,
                             url: 'data:' + attMime + ';base64,' + buffer.toString('base64'),
-                            thumbnail: null
+                            thumbnail: thumb
                         });
                         attachmentDownloaded++;
                     } catch (e) {
