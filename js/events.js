@@ -1203,8 +1203,33 @@ function bindCoreEventListeners() {
             try {
                 let dataChanged = false;
 
-                // 如果文件同步已启用，先从 .js 文件同步数据
-                if (storageManager.isFileSyncEnabled && storageManager.dataDirHandle) {
+                // C/S 模式: 从服务端 API 拉最新数据（其他终端/飞书同步等都会改数据库）
+                if (typeof ApiClient !== 'undefined' && ApiClient.csMode) {
+                    try {
+                        const docs = await ApiClient.allAssets();
+                        const newLen = (docs || []).length;
+                        const oldLen = assetsData.length;
+                        // 简单判断: 数量变了或内容不同就算变化
+                        if (newLen !== oldLen) {
+                            dataChanged = true;
+                        } else if (newLen > 0) {
+                            // 数量相同, 抽样比一下第一个和最后一个的 id
+                            const oldIds = assetsData.map(a => a.id).sort();
+                            const newIds = docs.map(a => a.id).sort();
+                            if (oldIds[0] !== newIds[0] || oldIds[oldIds.length-1] !== newIds[newIds.length-1]) {
+                                dataChanged = true;
+                            }
+                        }
+                        if (dataChanged || newLen !== oldLen) {
+                            assetsData = docs || [];
+                            ApiClient._stamp = null;  // 重建指纹基线
+                            saveToLocalStorage();
+                        }
+                    } catch (apiErr) {
+                        console.warn('从服务端刷新失败(可能未登录):', apiErr.message);
+                    }
+                } else if (storageManager.isFileSyncEnabled && storageManager.dataDirHandle) {
+                    // 便携文件同步模式: 从 .js 文件同步
                     const syncResult = await storageManager.syncFromFiles();
                     dataChanged = syncResult.changed;
 
@@ -1230,9 +1255,7 @@ function bindCoreEventListeners() {
                 // 只刷新当前活跃页面的内容，不切换页面
                 refreshActivePageContent(dataChanged);
 
-                if (dataChanged) {
-                    showSyncToast('数据已从文件同步', 'success');
-                }
+                showSyncToast(dataChanged ? '数据已刷新' : '已是最新数据', 'success');
             } catch(e) {
                 console.error('刷新出错:', e);
                 showSyncToast('刷新失败: ' + e.message, 'error');
