@@ -4,33 +4,14 @@
  */
 
 function searchAssets(keyword) {
-    if (!keyword) {
-        renderAllAssets();
-        return;
+    // 把关键词写入搜索框，然后走统一的 applyFilters 逻辑
+    const keywordEl = document.getElementById('assets-search');
+    if (keywordEl && keywordEl.value !== keyword) {
+        keywordEl.value = keyword;
     }
-
-    const lowerKeyword = keyword.toLowerCase();
-    const filtered = assetsData.filter(asset => {
-        const id = (asset.id || '').toLowerCase();
-        const owner = (asset.owner || '').toLowerCase();
-        const brandModel = (asset.brandModel || '').toLowerCase();
-        const user = (asset.user || '').toLowerCase();
-        const department = (asset.department || '').toLowerCase();
-        const type = (asset.type || '').toLowerCase();
-        const description = (asset.description || '').toLowerCase();
-        const location = (asset.location || '').toLowerCase();
-
-        return id.includes(lowerKeyword) ||
-            owner.includes(lowerKeyword) ||
-            brandModel.includes(lowerKeyword) ||
-            user.includes(lowerKeyword) ||
-            department.includes(lowerKeyword) ||
-            type.includes(lowerKeyword) ||
-            description.includes(lowerKeyword) ||
-            location.includes(lowerKeyword);
-    });
-
-    renderAllAssets(filtered);
+    if (typeof applyFilters === 'function') {
+        applyFilters();
+    }
 }
 
 // 应用筛选条件
@@ -48,8 +29,40 @@ function applyFilters() {
         const typeFilter = document.getElementById('type-filter')?.value || 'all';
         const departmentFilter = document.getElementById('department-filter')?.value || 'all';
 
+        // 关键词搜索（与下拉筛选叠加）
+        const keywordEl = document.getElementById('assets-search');
+        const keyword = (keywordEl?.value || '').trim();
+        const lowerKeyword = keyword.toLowerCase();
+
         // 确保始终使用原始的assetsData进行筛选，而不是可能被修改过的数据
         let filtered = [...assetsData];
+
+        // 关键词搜索（先做，缩小数据集）
+        if (lowerKeyword) {
+            filtered = filtered.filter(asset => {
+                const id = (asset.id || '').toLowerCase();
+                const owner = (asset.owner || '').toLowerCase();
+                const brandModel = (asset.brandModel || '').toLowerCase();
+                const user = (asset.user || '').toLowerCase();
+                const department = (asset.department || '').toLowerCase();
+                const type = (asset.type || '').toLowerCase();
+                const description = (asset.description || '').toLowerCase();
+                const location = (asset.location || '').toLowerCase();
+                const manager = (asset.manager || '').toLowerCase();
+                const purchaseNo = (asset.purchaseNo || '').toLowerCase();
+
+                return id.includes(lowerKeyword) ||
+                    owner.includes(lowerKeyword) ||
+                    brandModel.includes(lowerKeyword) ||
+                    user.includes(lowerKeyword) ||
+                    department.includes(lowerKeyword) ||
+                    type.includes(lowerKeyword) ||
+                    description.includes(lowerKeyword) ||
+                    location.includes(lowerKeyword) ||
+                    manager.includes(lowerKeyword) ||
+                    purchaseNo.includes(lowerKeyword);
+            });
+        }
 
         // 状态筛选
         if (statusFilter !== 'all') {
