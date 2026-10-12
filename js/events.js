@@ -1152,22 +1152,20 @@ function bindCoreEventListeners() {
             if (menuItem) {
                 const targetPage = menuItem.dataset.target;
                 
-                // 检查菜单项是否有正确的data-target属性
-                if (!targetPage) {
-                    console.error('菜单项缺少data-target属性:', menuItem);
+                // 没有 data-target 的 menu-item 不是导航项（如切换模式按钮有自己的 handler），静默跳过
+                if (!targetPage) return;
+                
+                // 确认目标页面元素存在
+                const pageElement = document.getElementById(`${targetPage}-page`);
+                
+                if (!pageElement) {
+                    console.error('目标页面不存在:', targetPage + '-page');
                 } else {
-                    // 确认目标页面元素存在
-                    const pageElement = document.getElementById(`${targetPage}-page`);
-                    
-                    if (!pageElement) {
-                        console.error('目标页面不存在:', targetPage + '-page');
-                    } else {
-                        // 尝试手动执行页面切换逻辑
-                        try {
-                            switchPage(targetPage);
-                        } catch (error) {
-                            console.error('页面切换函数执行失败:', error);
-                        }
+                    // 尝试手动执行页面切换逻辑
+                    try {
+                        switchPage(targetPage);
+                    } catch (error) {
+                        console.error('页面切换函数执行失败:', error);
                     }
                 }
             }
