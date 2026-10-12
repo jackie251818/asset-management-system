@@ -109,7 +109,7 @@ router.get('/load', async (ctx) => {
 
     if (key === 'assetManagementData') {
         const rows = db.prepare('SELECT * FROM assets ORDER BY id ASC').all();
-        return raw(ctx, { success: true, key, data: rowsToDocs(rows) });
+        return raw(ctx, { success: true, key, data: rowsToDocs(rows, { skipAttachmentDataUrl: true }) });
     }
     if (OPTION_KEYS.includes(key)) {
         return raw(ctx, { success: true, key, data: loadOptions(key) });

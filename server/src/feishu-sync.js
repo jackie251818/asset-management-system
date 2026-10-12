@@ -422,9 +422,9 @@ async function pushToFeishu(options = {}) {
             return hit ? hit.table_id : null;
         };
 
-        // 1. 读取全部资产(含维保/附件, 但只推送映射的字段)
+        // 1. 读取全部资产(含维保/附件, 但只推送映射的字段) — 跳过 data_url 省内存
         const rows = db.prepare('SELECT * FROM assets ORDER BY id').all();
-        const docs = rowsToDocs(rows);
+        const docs = rowsToDocs(rows, { skipAttachmentDataUrl: true });
 
         // 2. 读取同步状态
         const stateRows = db.prepare('SELECT * FROM feishu_sync_state').all();
@@ -554,8 +554,8 @@ async function pullFromFeishu(options = {}) {
         // 1. 读取本地资产 + 同步状态
         const localRows = db.prepare('SELECT id, updated_at, version FROM assets').all();
         const localMap = new Map(localRows.map(r => [r.id, r]));
-        // 本地完整文档(供 update 时保留未映射字段/维保记录, 防止 pull 把未映射字段清成 null)
-        const localDocs = new Map(rowsToDocs(db.prepare('SELECT * FROM assets').all()).map(d => [d.id, d]));
+        // 本地完整文档(供 update 时保留未映射字段/维保记录, 防止 pull 把未映射字段清成 null) — 跳过 data_url 省内存
+        const localDocs = new Map(rowsToDocs(db.prepare('SELECT * FROM assets').all(), { skipAttachmentDataUrl: true }).map(d => [d.id, d]));
         const mappedLocalFields = new Set(mappings.filter(m => m.feishuField).map(m => m.localField));
         const stateRows = db.prepare('SELECT * FROM feishu_sync_state').all();
         const stateMap = new Map(stateRows.map(r => [r.record_id, r]));
