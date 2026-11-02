@@ -84,6 +84,40 @@
             color: #333;
         }
 
+        /* ==================== 纸张尺寸设置 ==================== */
+        .paper-config {
+            max-width: 800px;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #fff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            font-size: 14px;
+            color: #333;
+        }
+
+        .paper-config select,
+        .paper-config input {
+            padding: 6px 8px;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #333;
+            background: #fff;
+        }
+
+        .paper-config input {
+            width: 64px;
+        }
+
+        .paper-config .paper-hint {
+            font-size: 12px;
+            color: #999;
+        }
+
         /* ==================== 标签切换 ==================== */
         .tabs {
             max-width: 800px;
@@ -135,20 +169,30 @@
             font-size: 14px;
         }
 
-        /* ==================== 单个标签 (70mm × 50mm) ==================== */
+        /* ==================== 单个标签 (基准 70mm × 50mm) ==================== */
+        /* --s: 按实际标签纸尺寸计算出的等比缩放系数（1 = 70×50 原始尺寸） */
         .label-card {
-            width: 70mm;
-            height: 50mm;
-            background: #fff;
-            border: 1px solid #000;
+            width: calc(70mm * var(--s, 1));
+            height: calc(var(--label-h, 50mm) * var(--s, 1));
             position: relative;
             overflow: hidden;
             flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            box-sizing: border-box;
             page-break-after: always;
             break-after: page;
+        }
+
+        /* 标签内容固定按 70×48mm 排版，整体等比缩放以适配任意纸张尺寸 */
+        .label-inner {
+            width: 70mm;
+            height: var(--label-h, 50mm);
+            background: #fff;
+            border: 1px solid #000;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transform: scale(var(--s, 1));
+            transform-origin: top left;
         }
 
         /* 公司名栏 */
@@ -272,10 +316,11 @@
             }
 
             html {
+                --label-h: 48mm;
                 margin: 0 !important;
                 padding: 0 !important;
                 height: auto !important;
-                width: 70mm !important;
+                width: var(--paper-w, 70mm) !important;
                 font-size: 0 !important;
             }
 
@@ -286,16 +331,17 @@
                 font-size: 0 !important;
                 line-height: 0 !important;
                 height: auto !important;
-                width: 70mm !important;
-                min-width: 70mm !important;
-                max-width: 70mm !important;
+                width: var(--paper-w, 70mm) !important;
+                min-width: var(--paper-w, 70mm) !important;
+                max-width: var(--paper-w, 70mm) !important;
                 color: #000 !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
 
             .page-header,
-            .tabs {
+            .tabs,
+            .paper-config {
                 display: none !important;
             }
 
@@ -306,8 +352,8 @@
                 border-radius: 0 !important;
                 padding: 0 !important;
                 margin: 0 !important;
-                max-width: 70mm !important;
-                width: 70mm !important;
+                max-width: var(--paper-w, 70mm) !important;
+                width: var(--paper-w, 70mm) !important;
                 min-height: 0 !important;
                 height: auto !important;
                 gap: 0 !important;
@@ -319,10 +365,8 @@
             }
 
             .label-card {
-                width: 70mm !important;
-                height: 48mm !important;
-                background: #fff !important;
-                border: 1px solid #000 !important;
+                width: calc(70mm * var(--s, 1)) !important;
+                height: calc(48mm * var(--s, 1)) !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 box-sizing: border-box !important;
@@ -332,8 +376,19 @@
                 break-after: page !important;
                 overflow: hidden !important;
                 position: relative !important;
+            }
+
+            .label-inner {
+                width: 70mm !important;
+                height: 48mm !important;
+                background: #fff !important;
+                border: 1px solid #000 !important;
+                box-sizing: border-box !important;
                 display: flex !important;
                 flex-direction: column !important;
+                overflow: hidden !important;
+                transform: scale(var(--s, 1)) !important;
+                transform-origin: top left !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
@@ -381,10 +436,12 @@
             }
         }
     </style>
+    <!-- 动态纸张尺寸（按「标签纸尺寸」控件生成，覆盖上面默认的 @page 尺寸） -->
+    <style id="print-page-style"></style>
 </head>
 <body>
     <div class="page-header">
-        <h1>资产标签打印（70mm × 50mm）</h1>
+        <h1>资产标签打印（<span id="paper-size-title">70mm × 50mm</span>）</h1>
         <div class="actions">
             <button class="btn btn-secondary" id="btn-back">
                 <i class="fas fa-arrow-left"></i>
@@ -395,6 +452,25 @@
                 打印标签
             </button>
         </div>
+    </div>
+
+    <div class="paper-config">
+        <span>标签纸尺寸:</span>
+        <select id="paper-preset">
+            <option value="70x50">70 × 50 mm（默认）</option>
+            <option value="60x40">60 × 40 mm</option>
+            <option value="58x40">58 × 40 mm</option>
+            <option value="50x30">50 × 30 mm</option>
+            <option value="40x30">40 × 30 mm</option>
+            <option value="custom">自定义…</option>
+        </select>
+        <span id="paper-custom" style="display:none; align-items:center; gap:6px;">
+            <input type="number" id="paper-w" min="20" max="210" step="1">
+            <span>×</span>
+            <input type="number" id="paper-h" min="15" max="297" step="1">
+            <span>mm</span>
+        </span>
+        <span class="paper-hint">须与打印机里的标签纸一致，内容会自动等比缩放</span>
     </div>
 
     <div class="tabs">
@@ -414,6 +490,73 @@
         let singleAssetMode = false;
         const PRINT_RECORD_KEY = 'assetLabelPrintRecord';
         let serverBaseUrl = ''; // 服务器真实URL（含IP），用于生成二维码
+
+        // 标签基准排版尺寸：内容固定按 70mm × 48mm 排版，再按实际纸张等比缩放
+        const BASE_LABEL_W = 70;
+        const BASE_LABEL_H = 48;
+        const PAPER_SIZE_KEY = 'assetLabelPaperSize';
+        let paperSize = { w: 70, h: 50 };
+
+        // ==================== 标签纸尺寸 ====================
+        function getSavedPaperSize() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(PAPER_SIZE_KEY) || 'null');
+                if (saved && Number(saved.w) > 0 && Number(saved.h) > 0) {
+                    return { w: Number(saved.w), h: Number(saved.h) };
+                }
+            } catch (e) { /* 忽略 */ }
+            return { w: 70, h: 50 };
+        }
+
+        // 应用纸张尺寸：@page 纸张 + 内容等比缩放（保证内容完整落在纸面内）
+        function applyPaperSize(w, h, persist) {
+            w = Math.min(210, Math.max(20, Math.round(w)));
+            h = Math.min(297, Math.max(15, Math.round(h)));
+            paperSize = { w: w, h: h };
+
+            const scale = Math.min(1, w / BASE_LABEL_W, h / BASE_LABEL_H);
+            const root = document.documentElement;
+            root.style.setProperty('--paper-w', w + 'mm');
+            root.style.setProperty('--paper-h', h + 'mm');
+            root.style.setProperty('--s', String(scale));
+
+            const pageStyle = document.getElementById('print-page-style');
+            if (pageStyle) {
+                pageStyle.textContent =
+                    '@page { size: ' + w + 'mm ' + h + 'mm; margin: 0; }\n' +
+                    '@page :first { margin: 0; }';
+            }
+
+            const title = document.getElementById('paper-size-title');
+            if (title) title.textContent = w + 'mm × ' + h + 'mm';
+
+            if (persist) {
+                try {
+                    localStorage.setItem(PAPER_SIZE_KEY, JSON.stringify({ w: w, h: h }));
+                } catch (e) { /* 忽略 */ }
+            }
+        }
+
+        // 让下拉框/自定义输入与当前纸张尺寸保持一致
+        function syncPaperControls() {
+            const select = document.getElementById('paper-preset');
+            const custom = document.getElementById('paper-custom');
+            const wInput = document.getElementById('paper-w');
+            const hInput = document.getElementById('paper-h');
+            if (!select || !custom || !wInput || !hInput) return;
+
+            wInput.value = paperSize.w;
+            hInput.value = paperSize.h;
+
+            const preset = paperSize.w + 'x' + paperSize.h;
+            if (Array.from(select.options).some(o => o.value === preset)) {
+                select.value = preset;
+                custom.style.display = 'none';
+            } else {
+                select.value = 'custom';
+                custom.style.display = 'inline-flex';
+            }
+        }
 
         // ==================== DOM 引用 ====================
         const labelsContainer = document.getElementById('labels-container');
@@ -562,38 +705,40 @@
             const location = asset.location || '-';
 
             card.innerHTML = `
-                ${isPrinted ? '<div class="printed-mark">已打印</div>' : ''}
-                <div class="label-header" title="${escapeHtml(companyName)}">${escapeHtml(companyName)}</div>
-                <div class="label-body">
-                    <div class="label-info">
-                        <div class="label-info-row">
-                            <span class="label-info-label">资产名称:</span>
-                            <span class="label-info-value" title="${escapeHtml(assetName)}">${escapeHtml(assetName)}</span>
+                <div class="label-inner">
+                    ${isPrinted ? '<div class="printed-mark">已打印</div>' : ''}
+                    <div class="label-header" title="${escapeHtml(companyName)}">${escapeHtml(companyName)}</div>
+                    <div class="label-body">
+                        <div class="label-info">
+                            <div class="label-info-row">
+                                <span class="label-info-label">资产名称:</span>
+                                <span class="label-info-value" title="${escapeHtml(assetName)}">${escapeHtml(assetName)}</span>
+                            </div>
+                            <div class="label-info-row">
+                                <span class="label-info-label">规格型号:</span>
+                                <span class="label-info-value" title="${escapeHtml(brandModel)}">${escapeHtml(brandModel)}</span>
+                            </div>
+                            <div class="label-info-row">
+                                <span class="label-info-label">资产编码:</span>
+                                <span class="label-info-value" title="${escapeHtml(assetCode)}">${escapeHtml(assetCode)}</span>
+                            </div>
+                            <div class="label-info-row">
+                                <span class="label-info-label">所属机构:</span>
+                                <span class="label-info-value" title="${escapeHtml(orgName)}">${escapeHtml(orgName)}</span>
+                            </div>
+                            <div class="label-info-row">
+                                <span class="label-info-label">责任人:</span>
+                                <span class="label-info-value" title="${escapeHtml(responsible)}">${escapeHtml(responsible)}</span>
+                            </div>
+                            <div class="label-info-row">
+                                <span class="label-info-label">存放地点:</span>
+                                <span class="label-info-value" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
+                            </div>
                         </div>
-                        <div class="label-info-row">
-                            <span class="label-info-label">规格型号:</span>
-                            <span class="label-info-value" title="${escapeHtml(brandModel)}">${escapeHtml(brandModel)}</span>
+                        <div class="label-qrcode">
+                            <div class="qrcode-wrapper" id="qr-${escapeHtml(asset.id)}"></div>
+                            <div class="qrcode-label">${escapeHtml(assetCode)}</div>
                         </div>
-                        <div class="label-info-row">
-                            <span class="label-info-label">资产编码:</span>
-                            <span class="label-info-value" title="${escapeHtml(assetCode)}">${escapeHtml(assetCode)}</span>
-                        </div>
-                        <div class="label-info-row">
-                            <span class="label-info-label">所属机构:</span>
-                            <span class="label-info-value" title="${escapeHtml(orgName)}">${escapeHtml(orgName)}</span>
-                        </div>
-                        <div class="label-info-row">
-                            <span class="label-info-label">责任人:</span>
-                            <span class="label-info-value" title="${escapeHtml(responsible)}">${escapeHtml(responsible)}</span>
-                        </div>
-                        <div class="label-info-row">
-                            <span class="label-info-label">存放地点:</span>
-                            <span class="label-info-value" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
-                        </div>
-                    </div>
-                    <div class="label-qrcode">
-                        <div class="qrcode-wrapper" id="qr-${escapeHtml(asset.id)}"></div>
-                        <div class="qrcode-label">${escapeHtml(assetCode)}</div>
                     </div>
                 </div>
             `;
@@ -815,6 +960,29 @@
                     filterAndRender();
                 });
             });
+
+            // 标签纸尺寸：预设下拉
+            document.getElementById('paper-preset').addEventListener('change', (e) => {
+                const custom = document.getElementById('paper-custom');
+                if (e.target.value === 'custom') {
+                    custom.style.display = 'inline-flex';
+                    return;
+                }
+                const [w, h] = e.target.value.split('x').map(Number);
+                custom.style.display = 'none';
+                applyPaperSize(w, h, true);
+            });
+
+            // 标签纸尺寸：自定义宽/高
+            ['paper-w', 'paper-h'].forEach(id => {
+                document.getElementById(id).addEventListener('change', () => {
+                    const w = Number(document.getElementById('paper-w').value);
+                    const h = Number(document.getElementById('paper-h').value);
+                    if (!w || !h) return;
+                    applyPaperSize(w, h, true);
+                    syncPaperControls();
+                });
+            });
         }
 
         // 打印前的说明对话框
@@ -835,11 +1003,11 @@
                             <i class="fas fa-print" style="color: #1890ff;"></i> 打印前请确认打印机设置
                         </h3>
                         <div style="font-size: 13px; color: #555; line-height: 1.85;">
-                            <p style="margin: 0 0 10px;">即将打印 <strong style="color: #1890ff;">${count}</strong> 张资产标签 (70×50mm)</p>
+                            <p style="margin: 0 0 10px;">即将打印 <strong style="color: #1890ff;">${count}</strong> 张资产标签 (${paperSize.w}×${paperSize.h}mm)</p>
                             <div style="background: #fffbe6; border: 1px solid #ffe58f; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px;">
                                 <p style="margin: 0 0 6px; color: #d48806; font-weight: bold;">⚠️ 请在打印对话框中确认以下设置：</p>
                                 <ol style="margin: 0; padding-left: 18px; line-height: 1.9; color: #555;">
-                                    <li>纸张尺寸：选择 <strong style="color: #333;">70×50mm</strong>（或 "自定义"）</li>
+                                    <li>纸张尺寸：选择 <strong style="color: #333;">${paperSize.w}×${paperSize.h}mm</strong>（或 "自定义"）</li>
                                     <li>纸张方向：<strong style="color: #333;">纵向</strong></li>
                                     <li>缩放：<strong style="color: #333;">100%</strong>（实际大小）</li>
                                     <li>边距：<strong style="color: #333;">无/最小</strong></li>
@@ -847,7 +1015,7 @@
                                 </ol>
                             </div>
                             <p style="margin: 0; font-size: 12px; color: #999;">
-                                💡 如找不到 70×50mm 纸张，请先在"打印机属性"中添加自定义纸张尺寸
+                                💡 纸张尺寸必须与打印机里实际装入的标签纸一致；如打印内容被裁掉一半，请把「标签纸尺寸」改成实际尺寸（如 58×40），内容会自动缩小以完整打印
                             </p>
                         </div>
                         <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
@@ -907,6 +1075,9 @@
 
         // ==================== 初始化 ====================
         document.addEventListener('DOMContentLoaded', () => {
+            const savedPaper = getSavedPaperSize();
+            applyPaperSize(savedPaper.w, savedPaper.h, false);
+            syncPaperControls();
             bindEvents();
             loadAssets().catch(err => {
                 console.error('初始化失败:', err);
