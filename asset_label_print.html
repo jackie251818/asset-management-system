@@ -169,11 +169,12 @@
             font-size: 14px;
         }
 
-        /* ==================== 单个标签 (基准 70mm × 50mm) ==================== */
-        /* --s: 按实际标签纸尺寸计算出的等比缩放系数（1 = 70×50 原始尺寸） */
+        /* ==================== 单个标签 ==================== */
+        /* --label-w/--label-h: 标签内容基准尺寸（横版 70×48、竖版 48×68，由 JS 按纸张方向切换）
+           --s: 按实际标签纸尺寸计算出的等比缩放系数（1 = 原始尺寸） */
         .label-card {
-            width: calc(70mm * var(--s, 1));
-            height: calc(var(--label-h, 50mm) * var(--s, 1));
+            width: calc(var(--label-w, 70mm) * var(--s, 1));
+            height: calc(var(--label-h, 48mm) * var(--s, 1));
             position: relative;
             overflow: hidden;
             flex-shrink: 0;
@@ -181,10 +182,10 @@
             break-after: page;
         }
 
-        /* 标签内容固定按 70×48mm 排版，整体等比缩放以适配任意纸张尺寸 */
+        /* 标签内容固定按基准尺寸排版，整体等比缩放以适配任意纸张尺寸 */
         .label-inner {
-            width: 70mm;
-            height: var(--label-h, 50mm);
+            width: var(--label-w, 70mm);
+            height: var(--label-h, 48mm);
             background: #fff;
             border: 1px solid #000;
             box-sizing: border-box;
@@ -290,6 +291,32 @@
             word-break: break-all;
         }
 
+        /* ==================== 竖版标签（纸张宽 < 高，如 50×70 标签机） ==================== */
+        /* 信息行在上、二维码居中在下，避免 70mm 横版被窄纸裁切 */
+        html.portrait .label-body {
+            flex-direction: column;
+        }
+
+        html.portrait .label-info {
+            border-right: none;
+            border-bottom: 1px solid #000;
+            padding: 1mm 1.5mm;
+        }
+
+        html.portrait .label-info-label {
+            min-width: 12mm;
+        }
+
+        html.portrait .label-qrcode {
+            width: 100%;
+            padding: 1mm 0;
+        }
+
+        html.portrait .qrcode-wrapper {
+            width: 26mm;
+            height: 26mm;
+        }
+
         /* 已打印标记 */
         .printed-mark {
             position: absolute;
@@ -316,7 +343,6 @@
             }
 
             html {
-                --label-h: 48mm;
                 margin: 0 !important;
                 padding: 0 !important;
                 height: auto !important;
@@ -365,8 +391,8 @@
             }
 
             .label-card {
-                width: calc(70mm * var(--s, 1)) !important;
-                height: calc(48mm * var(--s, 1)) !important;
+                width: calc(var(--label-w, 70mm) * var(--s, 1)) !important;
+                height: calc(var(--label-h, 48mm) * var(--s, 1)) !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 box-sizing: border-box !important;
@@ -379,8 +405,8 @@
             }
 
             .label-inner {
-                width: 70mm !important;
-                height: 48mm !important;
+                width: var(--label-w, 70mm) !important;
+                height: var(--label-h, 48mm) !important;
                 background: #fff !important;
                 border: 1px solid #000 !important;
                 box-sizing: border-box !important;
@@ -434,6 +460,31 @@
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
+
+            /* 竖版打印（50×70 等窄幅标签纸）：信息在上、二维码在下铺满宽度 */
+            html.portrait .label-body {
+                flex-direction: column !important;
+            }
+
+            html.portrait .label-info {
+                border-right: none !important;
+                border-bottom: 1px solid #000 !important;
+                padding: 1mm 1.5mm !important;
+            }
+
+            html.portrait .label-info-label {
+                min-width: 12mm !important;
+            }
+
+            html.portrait .label-qrcode {
+                width: 100% !important;
+                padding: 1mm 0 !important;
+            }
+
+            html.portrait .qrcode-wrapper {
+                width: 26mm !important;
+                height: 26mm !important;
+            }
         }
     </style>
     <!-- 动态纸张尺寸（按「标签纸尺寸」控件生成，覆盖上面默认的 @page 尺寸） -->
@@ -441,7 +492,7 @@
 </head>
 <body>
     <div class="page-header">
-        <h1>资产标签打印（<span id="paper-size-title">70mm × 50mm</span>）</h1>
+        <h1>资产标签打印（<span id="paper-size-title">50mm × 70mm</span>）</h1>
         <div class="actions">
             <button class="btn btn-secondary" id="btn-back">
                 <i class="fas fa-arrow-left"></i>
@@ -457,11 +508,13 @@
     <div class="paper-config">
         <span>标签纸尺寸:</span>
         <select id="paper-preset">
-            <option value="70x50">70 × 50 mm（默认）</option>
-            <option value="60x40">60 × 40 mm</option>
-            <option value="58x40">58 × 40 mm</option>
-            <option value="50x30">50 × 30 mm</option>
-            <option value="40x30">40 × 30 mm</option>
+            <option value="50x70">50 × 70 mm（竖版，标签机默认）</option>
+            <option value="70x50">70 × 50 mm（横版）</option>
+            <option value="60x40">60 × 40 mm（横版）</option>
+            <option value="58x40">58 × 40 mm（横版）</option>
+            <option value="40x60">40 × 60 mm（竖版）</option>
+            <option value="50x30">50 × 30 mm（横版）</option>
+            <option value="40x30">40 × 30 mm（横版）</option>
             <option value="custom">自定义…</option>
         </select>
         <span id="paper-custom" style="display:none; align-items:center; gap:6px;">
@@ -470,7 +523,7 @@
             <input type="number" id="paper-h" min="15" max="297" step="1">
             <span>mm</span>
         </span>
-        <span class="paper-hint">须与打印机里的标签纸一致，内容会自动等比缩放</span>
+        <span class="paper-hint">须与打印机里的标签纸一致；宽 < 高时自动切换竖版版式并等比缩放</span>
     </div>
 
     <div class="tabs">
@@ -491,11 +544,12 @@
         const PRINT_RECORD_KEY = 'assetLabelPrintRecord';
         let serverBaseUrl = ''; // 服务器真实URL（含IP），用于生成二维码
 
-        // 标签基准排版尺寸：内容固定按 70mm × 48mm 排版，再按实际纸张等比缩放
-        const BASE_LABEL_W = 70;
-        const BASE_LABEL_H = 48;
+        // 标签基准排版尺寸：横版内容固定按 70mm × 48mm、竖版按 48mm × 68mm 排版，
+        // 再按实际纸张等比缩放（竖版用于 50×70 等窄幅标签机，避免横版被裁）
+        const BASE_LANDSCAPE = { w: 70, h: 48 };
+        const BASE_PORTRAIT = { w: 48, h: 68 };
         const PAPER_SIZE_KEY = 'assetLabelPaperSize';
-        let paperSize = { w: 70, h: 50 };
+        let paperSize = { w: 50, h: 70 };
 
         // ==================== 标签纸尺寸 ====================
         function getSavedPaperSize() {
@@ -505,7 +559,7 @@
                     return { w: Number(saved.w), h: Number(saved.h) };
                 }
             } catch (e) { /* 忽略 */ }
-            return { w: 70, h: 50 };
+            return { w: 50, h: 70 };
         }
 
         // 应用纸张尺寸：@page 纸张 + 内容等比缩放（保证内容完整落在纸面内）
@@ -514,11 +568,17 @@
             h = Math.min(297, Math.max(15, Math.round(h)));
             paperSize = { w: w, h: h };
 
-            const scale = Math.min(1, w / BASE_LABEL_W, h / BASE_LABEL_H);
+            // 纸张宽 < 高时用竖版版式，否则用横版
+            const isPortrait = h > w;
+            const base = isPortrait ? BASE_PORTRAIT : BASE_LANDSCAPE;
+            const scale = Math.min(1, w / base.w, h / base.h);
             const root = document.documentElement;
             root.style.setProperty('--paper-w', w + 'mm');
             root.style.setProperty('--paper-h', h + 'mm');
+            root.style.setProperty('--label-w', base.w + 'mm');
+            root.style.setProperty('--label-h', base.h + 'mm');
             root.style.setProperty('--s', String(scale));
+            root.classList.toggle('portrait', isPortrait);
 
             const pageStyle = document.getElementById('print-page-style');
             if (pageStyle) {
@@ -1007,15 +1067,15 @@
                             <div style="background: #fffbe6; border: 1px solid #ffe58f; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px;">
                                 <p style="margin: 0 0 6px; color: #d48806; font-weight: bold;">⚠️ 请在打印对话框中确认以下设置：</p>
                                 <ol style="margin: 0; padding-left: 18px; line-height: 1.9; color: #555;">
-                                    <li>纸张尺寸：选择 <strong style="color: #333;">${paperSize.w}×${paperSize.h}mm</strong>（或 "自定义"）</li>
-                                    <li>纸张方向：<strong style="color: #333;">纵向</strong></li>
+                                    <li>纸张尺寸：选择 <strong style="color: #333;">${paperSize.w}×${paperSize.h}mm</strong>（与打印机实际纸型一致，如 E 50×70）</li>
+                                    <li>纸张方向：<strong style="color: #333;">${paperSize.h > paperSize.w ? '纵向（竖版）' : '横向'}</strong></li>
                                     <li>缩放：<strong style="color: #333;">100%</strong>（实际大小）</li>
                                     <li>边距：<strong style="color: #333;">无/最小</strong></li>
                                     <li>取消勾选<strong>页眉和页脚</strong></li>
                                 </ol>
                             </div>
                             <p style="margin: 0; font-size: 12px; color: #999;">
-                                💡 纸张尺寸必须与打印机里实际装入的标签纸一致；如打印内容被裁掉一半，请把「标签纸尺寸」改成实际尺寸（如 58×40），内容会自动缩小以完整打印
+                                💡 纸张尺寸必须与打印机里实际装入的标签纸一致；标签机（如 DT-280）默认纸型为 E 50×70，请在「标签纸尺寸」选择 50×70，版式会自动转为竖版并缩放，避免内容被裁
                             </p>
                         </div>
                         <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
