@@ -94,15 +94,17 @@ function applyFilters() {
             filtered = filtered.filter(asset => {
                 if (!asset.purchaseDate) return false;
 
-                const assetDate = new Date(asset.purchaseDate);
+                // 把 YYYY-MM-DD 换成 YYYY/MM/DD 强制本地时区解析(ES2015+ 把 - 格式当 UTC,差 8 小时)
+                const parseLocal = (s) => new Date(String(s).replace(/-/g, '/'));
+                const assetDate = parseLocal(asset.purchaseDate);
 
-                if (dateFrom && assetDate < new Date(dateFrom)) {
+                if (dateFrom && assetDate < parseLocal(dateFrom)) {
                     return false;
                 }
 
                 if (dateTo) {
-                    const toDate = new Date(dateTo);
-                    toDate.setHours(23, 59, 59, 999); // 设置为当天的最后一刻
+                    const toDate = parseLocal(dateTo);
+                    toDate.setHours(23, 59, 59, 999); // 设置为当天的最后一刻(本地时区)
                     if (assetDate > toDate) {
                         return false;
                     }

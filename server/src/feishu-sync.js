@@ -253,7 +253,10 @@ function recordToDoc(record, mappings, idField) {
     if (!doc.type) doc.type = '未分类';
     if (!doc.brandModel) doc.brandModel = '';
     if (!doc.department) doc.department = '未分配';
-    if (!doc.purchaseDate) doc.purchaseDate = new Date().toISOString().split('T')[0];
+    if (!doc.purchaseDate) doc.purchaseDate = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    })();
     // 使用状态: 飞书表可能无此字段, 默认在用
     if (!doc.status) doc.status = 'active';
     // 附件字段: 规范化为元信息数组(保留 _file_token 供后续下载), 二进制在事务外下载后填 url
@@ -451,7 +454,9 @@ async function buildFieldsWithAttachments(cfg, doc, mappings, tableId) {
             } else if (ft === 3) { // SingleSelect 需要字符串
                 fields[name] = String(val);
             } else if (ft === 5 && typeof val !== 'number') { // DateTime 需要毫秒时间戳
-                const t = new Date(val).getTime();
+                // 注意: new Date('YYYY-MM-DD') 在 ES2015+ 被当成 UTC, 飞书期望本地时区午夜
+                // 所以把 - 换成 / 强制本地时区解析(和 parseDateToMs 逻辑一致)
+                const t = new Date(String(val).replace(/-/g, '/')).getTime();
                 if (isNaN(t)) { delete fields[name]; continue; }
                 fields[name] = t;
             }

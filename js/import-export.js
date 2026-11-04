@@ -89,17 +89,22 @@ function handleExcelImport(e) {
                 // 购入日期解析：兼容 Excel 序列号日期 / ISO 字符串 / 中文斜杠格式
                 let purchaseDate = '';
                 const rawDate = item['购入日期'];
+                // 本地时区安全的日期格式化 helper (避免 toISOString 按 UTC 取日期差一天)
+                const fmtLocal = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 if (rawDate !== undefined && rawDate !== null && rawDate !== '') {
                     // Excel 序列号（1900 日期系统）
                     if (typeof rawDate === 'number') {
+                        // Excel 序列号是「本地日期 + 0.5 天」(中午),用 UTC 午夜基准算天数最稳
+                        // 但 targetDate 会落在 UTC 时间,直接取本地时区日期组件即可
                         const excelEpoch = new Date(Date.UTC(1899, 11, 30));
                         const utcDays = Math.floor(rawDate - 1); // 修正 Excel 闰年 Bug
                         const targetDate = new Date(excelEpoch.getTime() + utcDays * 86400000);
-                        purchaseDate = targetDate.toISOString().split('T')[0];
+                        purchaseDate = fmtLocal(targetDate);
                     } else {
-                        const parsed = new Date(String(rawDate).replace(/\//g, '-'));
+                        // 把 - 换成 / 强制本地时区解析(ES2015+ 把 - 格式当 UTC)
+                        const parsed = new Date(String(rawDate).replace(/\//g, '/').replace(/-/g, '/'));
                         if (!isNaN(parsed.getTime())) {
-                            purchaseDate = parsed.toISOString().split('T')[0];
+                            purchaseDate = fmtLocal(parsed);
                         }
                     }
                 }

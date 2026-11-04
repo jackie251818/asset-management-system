@@ -116,10 +116,11 @@ function renderRecentAssets() {
             }
             
             // 按购买日期排序，取最近3条 - 使用自定义排序函数优化性能
+            // 把 YYYY-MM-DD 换成 YYYY/MM/DD 强制本地时区解析(ES2015+ 把 - 格式当 UTC,差 8 小时)
+            const dateOf = (s) => s ? new Date(String(s).replace(/-/g,'/')).getTime() : 0;
             const recentAssets = [...assetsData].sort((a, b) => {
-                // 避免重复创建Date对象
-                const dateA = a.purchaseDate ? new Date(a.purchaseDate).getTime() : 0;
-                const dateB = b.purchaseDate ? new Date(b.purchaseDate).getTime() : 0;
+                const dateA = dateOf(a.purchaseDate);
+                const dateB = dateOf(b.purchaseDate);
                 return dateB - dateA;
             }).slice(0, 3);
             
