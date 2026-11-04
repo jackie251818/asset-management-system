@@ -211,19 +211,20 @@ function docToFields(doc, mappings) {
         if (m.type === 'attachment') continue; // 附件走独立上传流程, 不在标量映射内
         const val = doc[m.localField];
         if (val === undefined || val === null || val === '') { continue; }
+        // feishuField 是数组时取第一个(主要列)作为推送目标
+        const targetField = Array.isArray(m.feishuField) ? m.feishuField[0] : m.feishuField;
+        if (!targetField) continue;
         switch (m.type) {
             case 'number':
-                fields[m.feishuField] = Number(val); break;
+                fields[targetField] = Number(val); break;
             case 'date':
-                fields[m.feishuField] = parseDateToMs(val); break;
+                fields[targetField] = parseDateToMs(val); break;
             case 'single_select':
-                // 本地用英文代码, 飞书用中文标签 (使用状态字段需双向映射)
-                fields[m.feishuField] = (m.localField === 'status' && STATUS_EN_TO_CN[val]) || String(val); break;
+                fields[targetField] = (m.localField === 'status' && STATUS_EN_TO_CN[val]) || String(val); break;
             case 'multi_select':
-                // 多选: 本地逗号分隔字符串 → 飞书数组
-                fields[m.feishuField] = String(val).split(',').map(s => s.trim()).filter(Boolean); break;
+                fields[targetField] = String(val).split(',').map(s => s.trim()).filter(Boolean); break;
             default:
-                fields[m.feishuField] = String(val);
+                fields[targetField] = String(val);
         }
     }
     return fields;
@@ -233,7 +234,12 @@ function recordToDoc(record, mappings, idField) {
     const f = record.fields || {};
     const doc = {};
     for (const m of mappings) {
-        const v = f[m.feishuField];
+        // feishuField 可以是字符串(单列)或数组(多列候选,按存在性取第一个)
+        const candidates = Array.isArray(m.feishuField) ? m.feishuField : [m.feishuField];
+        let v = undefined;
+        for (const name of candidates) {
+            if (name && f[name] !== undefined && f[name] !== null) { v = f[name]; break; }
+        }
         doc[m.localField] = normalizeFeishuValue(v, m.type);
     }
     doc.id = normalizeFeishuValue(f[idField], 'text');
@@ -305,7 +311,8 @@ function hashFields(doc, mappings) {
     for (const m of mappings) {
         if (m.type !== 'attachment') continue;
         const list = Array.isArray(doc[m.localField]) ? doc[m.localField] : [];
-        fields['__att:' + m.feishuField] = list.map(a => String(a && a.name || '') + ':' + String(a && a.size || 0));
+        const key = Array.isArray(m.feishuField) ? m.feishuField.join('|') : m.feishuField;
+        fields['__att:' + key] = list.map(a => String(a && a.name || '') + ':' + String(a && a.size || 0));
     }
     return crypto.createHash('md5').update(JSON.stringify(fields)).digest('hex');
 }
