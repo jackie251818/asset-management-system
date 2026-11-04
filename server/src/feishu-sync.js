@@ -293,15 +293,25 @@ function normalizeFeishuValue(v, type) {
         return v.name || null;
     }
     if (type === 'date' && typeof v === 'number') {
-        // 飞书日期字段返回毫秒时间戳, 转 YYYY-MM-DD
-        return new Date(v).toISOString().split('T')[0];
+        // 飞书日期字段(type=5)存的是「用户本地时区午夜」的 UTC 时间戳
+        // 中国用户选 6月23日,飞书实际存 6月22日 16:00 UTC(时差 8 小时)
+        // 用 toISOString() 按 UTC 取日期部分会差一天,必须用本地时区组件
+        const d = new Date(v);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
     }
     return v;
 }
 
 function parseDateToMs(val) {
     // 支持 YYYY-MM-DD, YYYY/MM/DD, ISO 字符串
-    const d = new Date(val);
+    // 注意: new Date('YYYY-MM-DD') 在 ES2015+ 里被当成 UTC, 但飞书期望「本地时区午夜」
+    // UTC+8 时区会差 8 小时导致日期偏移 1 天。统一把 - 换成 / 强制本地时区解析。
+    if (!val) return null;
+    const normalized = String(val).replace(/-/g, '/');
+    const d = new Date(normalized);
     return isNaN(d.getTime()) ? null : d.getTime();
 }
 
