@@ -206,13 +206,24 @@
                     tableId
                 });
                 this._feishuFields = result.fields || [];
-                // 若已有保存的映射, 保留; 否则自动生成全字段默认映射
-                if (!this._mappings || this._mappings.length === 0) {
-                    this.ensureDefaultMappings();
-                }
+                // 若已有保存的映射, 保留并自动修复弱匹配; 否则自动生成全字段默认映射
+                this.ensureDefaultMappings();
                 this.renderMappingTable();
                 const mapped = this._mappings.filter(m => m.feishuField).length;
-                showNotification(`已加载 ${this._feishuFields.length} 个飞书字段, 自动匹配 ${mapped}/${this._mappings.length} 个本地字段`, 'success');
+                // 健康体检: 列出弱匹配项让用户注意
+                const issues = this.auditMappings(this._mappings);
+                if (issues.length) {
+                    const weakCount = issues.filter(i => i.type === 'weak').length;
+                    const conflictCount = issues.filter(i => i.type === 'conflict').length;
+                    let msg = `已加载 ${this._feishuFields.length} 个飞书字段, 自动匹配 ${mapped}/${this._mappings.length} 个`;
+                    if (weakCount || conflictCount) {
+                        msg += `\n⚠️ 发现 ${conflictCount} 个冲突 + ${weakCount} 个弱匹配项, 请在下方映射表中检查`;
+                    }
+                    showNotification(msg, issues.length ? 'warning' : 'success');
+                    if (issues.length) console.warn('[飞书映射体检]', issues);
+                } else {
+                    showNotification(`已加载 ${this._feishuFields.length} 个飞书字段, 自动匹配 ${mapped}/${this._mappings.length} 个本地字段`, 'success');
+                }
             } catch (e) {
                 showNotification('加载字段失败: ' + e.message, 'error');
             }
@@ -347,26 +358,27 @@
         },
 
         // 智能匹配关键词（本地字段 → 飞书字段名可能包含的词）
+        // 顺序很关键: 核心语义词放最前, 修饰词放后面 (避免 "价值" 被 "含税价值" 抢先命中)
         LOCAL_FIELD_HINTS: {
             id: ['资产编号', '编号'],
-            owner: ['主体', '购买主体', '公司'],
-            type: ['类型', '设备类型'],
-            brandModel: ['品牌', '型号', '名称'],
+            owner: ['购买主体', '主体', '公司'],
+            type: ['设备类型', '类型', '资产名称', '名称'],
+            brandModel: ['品牌型号', '品牌', '型号', '规格', '资产规格', '名称'],
             configuration: ['配置', '规格'],
             purchaseDate: ['购买日期', '购入日期', '日期'],
-            status: ['状态'],
+            status: ['使用状态', '状态'],
             user: ['使用人', '领用人'],
-            department: ['部门', '使用部门'],
-            location: ['位置', '地点'],
-            manager: ['负责人', '管理人'],
+            department: ['使用部门', '部门'],
+            location: ['存放位置', '位置', '地点'],
+            manager: ['责任人', '负责人', '管理人'],
             damageReason: ['损坏', '报废原因'],
             unit: ['单位'],
             quantity: ['数量'],
-            value: ['价值', '金额', '含税', '不含税'],
-            depreciationYears: ['折旧', '年限'],
-            purchaseNo: ['采购流程', '采购编号'],
-            paymentNo: ['付款流程', '付款编号'],
-            attachments: ['附件', '照片', '图片', '文件'],
+            value: ['价值', '金额'],   // 删掉"含税/不含税":这些是修饰词,不应该抢先命中
+            depreciationYears: ['折旧年限', '折旧', '年限'],
+            purchaseNo: ['采购流程编号', '采购编号', '采购流程'],
+            paymentNo: ['付款流程编号', '付款编号', '付款流程'],
+            attachments: ['资产照片', '附件', '照片', '图片', '文件'],
         },
 
         // 字段类型中文名
@@ -379,31 +391,166 @@
             attachment: '附件',
         },
 
-        /** 🆕 加载飞书字段后, 自动为全部本地字段生成映射行(智能预选同名飞书字段) */
-        ensureDefaultMappings() {
-            if (this._mappings && this._mappings.length > 0) return;
-            const used = new Set();
-            const mappings = [];
-            for (const [localField, label] of Object.entries(this.LOCAL_FIELD_LABELS)) {
-                let feishuField = '';
-                // 1) 精确同名
-                let hit = this._feishuFields.find(f => f.field_name === label && !used.has(f.field_name));
-                // 2) 关键词包含匹配
-                if (!hit) {
-                    const hints = this.LOCAL_FIELD_HINTS[localField] || [label];
-                    for (const h of hints) {
-                        hit = this._feishuFields.find(f => f.field_name.includes(h) && !used.has(f.field_name));
-                        if (hit) break;
-                    }
+        // ============ 字段语义打分 ============
+        // 比较"本地字段中文名"和"飞书列名"的语义相似度
+        // 返回 0-100, 0=完全不相关, 100=精确同名
+        // 用于智能匹配优先级排序 + 已存映射健康体检
+        scoreLocalFieldVsFeishuField(localField, feishuName) {
+            if (!feishuName) return 0;
+            const label = this.LOCAL_FIELD_LABELS[localField] || localField;
+            const hints = this.LOCAL_FIELD_HINTS[localField] || [label];
+            const clean = s => String(s).replace(/[\s()（）\-—_:：,，.。·]+/g, '');
+            const L = clean(label);
+            const F = clean(feishuName);
+            let score = 0;
+
+            // 1) 精确同名 → 满分
+            if (L && F && L === F) return 100;
+            // 2) 飞书列名包含本地标签(核心语义在里面) → 高
+            if (F.includes(L) && L.length >= 2) score += 85;
+            // 3) 本地标签包含飞书列名 → 中
+            if (L.includes(F) && F.length >= 2) score += 75;
+
+            // 4) 每个 hint 命中加权 (hint 来自 LOCAL_FIELD_HINTS, 是人工配置的同义词/关键词)
+            for (const h of hints) {
+                const ch = clean(h);
+                if (!ch) continue;
+                if (ch === F) score += 95;              // hint 精确等于飞书列名 → 几乎满分
+                else if (F.includes(ch)) score += 25;   // hint 在飞书列名里 → +25
+                else if (ch.includes(F) && F.length >= 2) score += 15; // 反过来
+            }
+
+            // 5) 字面模糊兜底: 本地 label 所有单字都在飞书列名里出现过 → +30
+            //    (兜住同义词: "负责人" vs "责任人"、"类型" vs "名称" 这类标签名不匹配但语义对的情况)
+            if (L.length >= 2 && [...new Set(L.split(''))].every(c => F.includes(c))) score += 30;
+
+            // 6) 类型一致性加分: number 类型不应该匹配到纯文本的"使用状态/责任人"
+            const lType = this.LOCAL_FIELD_TYPES[localField];
+            const feishuField = (this._feishuFields || []).find(f => f.field_name === feishuName);
+            if (feishuField && lType) {
+                const fType = feishuField.type || '';
+                // 飞书字段类型参考: number/text/date/single_select/multi_select/person/attachment
+                const typeMap = { number: ['number'], date: ['date'],
+                    single_select: ['single_select'], multi_select: ['multi_select'],
+                    attachment: ['attachment'], person: ['person'] };
+                if (typeMap[lType] && typeMap[lType].includes(fType)) score += 15;
+                else if (typeMap[lType] && !typeMap[lType].includes(fType)) score -= 15;
+            }
+
+            // 6) 长度惩罚: 飞书列名过长且不含本地标签 → 减分 (避免 "折旧年限" 误命中 "折旧费用明细表")
+            if (F.length > L.length * 3 && !F.includes(L)) score -= 10;
+
+            return Math.max(0, Math.min(100, score));
+        },
+
+        /** 健康体检: 对已存的 fieldMappings 逐项打分, 低于阈值的返回警告列表 */
+        auditMappings(mappings) {
+            const issues = [];
+            // 同一飞书列被多个本地字段占用 → 冲突
+            const usedBy = {};
+            for (const m of mappings) {
+                if (!m.feishuField) continue;
+                (usedBy[m.feishuField] = usedBy[m.feishuField] || []).push(m.localField);
+            }
+            for (const [f, locals] of Object.entries(usedBy)) {
+                if (locals.length > 1) {
+                    issues.push({ type: 'conflict', feishuField: f, localFields: locals,
+                        msg: `飞书列「${f}」同时映射给 ${locals.join('/')}, 应只保留一项` });
                 }
-                if (hit) { feishuField = hit.field_name; used.add(hit.field_name); }
+            }
+            // 单项分数体检
+            for (const m of mappings) {
+                if (!m.feishuField) continue;
+                const s = this.scoreLocalFieldVsFeishuField(m.localField, m.feishuField);
+                if (s < 30) {
+                    const label = this.LOCAL_FIELD_LABELS[m.localField] || m.localField;
+                    issues.push({ type: 'weak', localField: m.localField, feishuField: m.feishuField, score: s,
+                        msg: `本地「${label}」→ 飞书「${m.feishuField}」语义分数仅 ${s}, 建议检查(可能匹配错列)` });
+                }
+            }
+            return issues;
+        },
+
+        /** 加载飞书字段后, 自动为全部本地字段生成映射行 */
+        ensureDefaultMappings() {
+            if (this._mappings && this._mappings.length > 0) {
+                // 已有映射时也跑一遍体检, 低于 30 分的自动修正
+                this._autoFixWeakMappings();
+                return;
+            }
+            this._mappings = this._computeBestMappings();
+        },
+
+        /** 计算最优映射: 打分矩阵 + 互斥贪心匹配 */
+        _computeBestMappings() {
+            const LABELS = this.LOCAL_FIELD_LABELS;
+            const mappings = [];
+            const used = new Set();   // 已分配给本地字段的飞书列名, 防止多对一
+            const FEISHU = this._feishuFields || [];
+
+            // 1) 对每个本地字段, 计算所有飞书列的 (score, feishuField) 对
+            const scored = [];  // 每项: {localField, feishuField, score}
+            for (const localField of Object.keys(LABELS)) {
+                for (const f of FEISHU) {
+                    const s = this.scoreLocalFieldVsFeishuField(localField, f.field_name);
+                    if (s >= 15) scored.push({ localField, feishuField: f.field_name, score: s });
+                }
+            }
+            // 2) 按 score 降序贪心分配
+            scored.sort((a, b) => b.score - a.score);
+            const localBest = {};
+            for (const s of scored) {
+                if (localBest[s.localField]) continue;     // 本地字段已拿到了
+                if (used.has(s.feishuField)) continue;     // 飞书列已被占
+                if (s.score < 25) break;                    // 分数太低, 后面的也不会更好了
+                localBest[s.localField] = s.feishuField;
+                used.add(s.feishuField);
+            }
+
+            for (const localField of Object.keys(LABELS)) {
                 mappings.push({
                     localField,
-                    feishuField,
+                    feishuField: localBest[localField] || '',
                     type: this.LOCAL_FIELD_TYPES[localField] || 'text'
                 });
             }
-            this._mappings = mappings;
+            return mappings;
+        },
+
+        /** 对已存映射做自修复: 分数 < 30 的, 重新用当前飞书字段列表算最优 */
+        _autoFixWeakMappings() {
+            const FEISHU = this._feishuFields || [];
+            if (!FEISHU.length) return;
+            // 当前已占用的飞书列(先不管弱映射, 留到后面)
+            const used = new Set(this._mappings.filter(m => m.feishuField &&
+                this.scoreLocalFieldVsFeishuField(m.localField, m.feishuField) >= 30)
+                .map(m => m.feishuField));
+
+            for (const m of this._mappings) {
+                const current = m.feishuField;
+                const curScore = current ? this.scoreLocalFieldVsFeishuField(m.localField, current) : 0;
+                if (curScore >= 30) continue;
+
+                // 找该本地字段可用的最高分飞书列
+                let bestName = ''; let bestScore = 0;
+                for (const f of FEISHU) {
+                    if (used.has(f.field_name)) continue;
+                    const s = this.scoreLocalFieldVsFeishuField(m.localField, f.field_name);
+                    if (s > bestScore) { bestScore = s; bestName = f.field_name; }
+                }
+                if (bestScore >= 30 && bestName !== current) {
+                    // 新映射才够好, 替换
+                    if (current) used.delete(current);
+                    m.feishuField = bestName;
+                    used.add(bestName);
+                    console.log(`[飞书映射自修复] ${this.LOCAL_FIELD_LABELS[m.localField]}:「${current||'空'}」→「${bestName}」(分数 ${bestScore})`);
+                } else if (current && curScore < 15) {
+                    // 实在找不到合适的, 清空比错配好
+                    m.feishuField = '';
+                    used.delete(current);
+                    console.log(`[飞书映射自修复] ${this.LOCAL_FIELD_LABELS[m.localField]}:「${current}」分数仅 ${curScore}, 已清空`);
+                }
+            }
         },
 
         renderMappingTable() {
